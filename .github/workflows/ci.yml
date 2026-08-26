@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Compile Python
+        run: python -m compileall -q app.py metrics_data.py series_data_1.py series_data_2.py series_data_3.py
+      - name: Validate bundled data
+        run: |
+          python - <<'PY'
+          import base64, gzip, json
+          from metrics_data import METRICS_GZ_B64
+          from series_data_1 import SERIES_GZ_B64_1
+          from series_data_2 import SERIES_GZ_B64_2
+          from series_data_3 import SERIES_GZ_B64_3
+          metrics = json.loads(gzip.decompress(base64.b64decode(METRICS_GZ_B64)))
+          series = json.loads(gzip.decompress(base64.b64decode(SERIES_GZ_B64_1 + SERIES_GZ_B64_2 + SERIES_GZ_B64_3)))
+          assert len(metrics) == 141
+          assert len({row['categoria'] for row in metrics}) == 16
+          assert sum(bool(row['es_bci']) for row in metrics) == 16
+          assert len(series) == 16
+          print('Bundled data OK')
+          PY
+      - name: Streamlit smoke test
+        run: |
+          streamlit run app.py --server.headless true --server.port 8501 > /tmp/streamlit.log 2>&1 &
+          pid=$!
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:8501/_stcore/health; then
+              kill $pid
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/streamlit.log
+          kill $pid || true
+          exit 1
