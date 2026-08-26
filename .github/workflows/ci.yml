@@ -16,7 +16,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Compile Python
-        run: python -m compileall -q app.py metrics_data.py series_data_1.py series_data_2.py series_data_3.py
+        run: python -m compileall -q app.py quota_update.py pages/99_Actualizar_valores_cuota.py metrics_data.py series_data_1.py series_data_2.py series_data_3.py
       - name: Validate bundled data
         run: |
           python - <<'PY'
@@ -32,6 +32,18 @@ jobs:
           assert sum(bool(row['es_bci']) for row in metrics) == 16
           assert len(series) == 16
           print('Bundled data OK')
+          PY
+      - name: Validate quota parser
+        run: |
+          python - <<'PY'
+          from quota_update import parse_quota_file, validate_quota_file
+          raw = 'Fecha;RUN;Valor Cuota\n25-08-2026;1234-5;1.234,56\n'.encode('utf-8')
+          df = parse_quota_file(raw, 'sample.csv')
+          assert len(df) == 1
+          assert float(df.iloc[0].valor_cuota) == 1234.56
+          result = validate_quota_file(df, {'1234-5'})
+          assert result['ok']
+          print('Quota parser OK')
           PY
       - name: Streamlit smoke test
         run: |
