@@ -4,29 +4,30 @@ import base64
 import gzip
 import json
 import os
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
 
+from cmf_automation import CMFAutomationError, CMFQuotaSession
 from metrics_data import METRICS_GZ_B64
 from quota_update import load_latest_quota, load_status, normalize_run, parse_quota_file, persist_quota, validate_quota_file
-
-CMF_URL = "https://www.cmfchile.cl/institucional/estadisticas/fm.bpr_menu.php"
 
 st.set_page_config(page_title="Actualizar valores cuota", page_icon="🔄", layout="centered")
 
 st.markdown(
     """
 <style>
-.block-container { max-width: 780px; padding-top: .7rem; padding-bottom: 2rem; }
+.block-container { max-width: 760px; padding-top: .6rem; padding-bottom: 2rem; }
 .admin-head { background:#064A91; color:white; padding:1rem 1.1rem; border-radius:10px; margin-bottom:.8rem; }
-.admin-head h1 { margin:0; color:white; font-size:1.45rem; }
-.admin-head p { margin:.35rem 0 0; opacity:.9; font-size:.88rem; }
-.step { background:white; border:1px solid #D8E2EA; border-radius:10px; padding:.8rem .9rem; margin:.65rem 0; }
-.step strong { color:#0B2F4A; }
+.admin-head h1 { margin:0; color:white; font-size:1.4rem; }
+.admin-head p { margin:.35rem 0 0; opacity:.92; font-size:.86rem; }
+.step { background:white; border:1px solid #D8E2EA; border-radius:10px; padding:.85rem .95rem; margin:.65rem 0; }
+.done { background:#F0FBF3; border:1px solid #9AD7A6; border-radius:10px; padding:.85rem .95rem; }
 @media (max-width:720px) {
-  .block-container { padding:.35rem .55rem 1.5rem; }
-  .admin-head h1 { font-size:1.15rem; }
+  .block-container { padding:.3rem .55rem 1.5rem; }
+  .admin-head h1 { font-size:1.12rem; }
+  div[data-testid="stHorizontalBlock"] { gap:.4rem; }
 }
 </style>
 """,
@@ -51,8 +52,15 @@ if ADMIN_PIN:
 metrics = json.loads(gzip.decompress(base64.b64decode(METRICS_GZ_B64)).decode("utf-8"))
 expected_runs = {normalize_run(row["run"]) for row in metrics if row.get("run")}
 
+if "cmf_session" not in st.session_state:
+    st.session_state.cmf_session = None
+if "cmf_captcha" not in st.session_state:
+    st.session_state.cmf_captcha = None
+if "cmf_prepared_date" not in st.session_state:
+    st.session_state.cmf_prepared_date = None
+
 st.markdown(
-    '<div class="admin-head"><h1>Actualizar valores cuota</h1><p>CMF → captcha → archivo → validación → histórico</p></div>',
+    '<div class="admin-head"><h1>Actualizar valores cuota</h1><p>Elige fecha → resuelve captcha → listo</p></div>',
     unsafe_allow_html=True,
 )
 
@@ -63,45 +71,91 @@ if status:
     b.metric("RUN cubiertos", f"{status.get('matched_runs', 0)}/{status.get('expected_runs', 0)}")
     c.metric("Histórico", f"{status.get('history_rows', 0)} filas")
 else:
-    st.info("Todavía no hay una carga diaria guardada en este deployment.")
+    st.info("Aún no hay una actualización diaria guardada en este deployment.")
 
-st.markdown('<div class="step"><strong>1 · Abrir la consulta oficial CMF</strong><br>Selecciona la consulta de valor cuota, resuelve el captcha y descarga el archivo del período disponible.</div>', unsafe_allow_html=True)
-st.link_button("Abrir consulta CMF", CMF_URL, width="stretch")
+st.markdown('<div class="step"><strong>1 · Elige la fecha</strong><br>Normalmente usarás el día anterior cuando la CMF ya haya publicado los valores cuota.</div>', unsafe_allow_html=True)
+selected_date = st.date_input(
+    "Fecha a descargar",
+    value=date.today() - timedelta(days=1),
+    max_value=date.today(),
+    format="DD/MM/YYYY",
+)
 
-st.markdown('<div class="step"><strong>2 · Subir el archivo descargado</strong><br>Admite CSV, XLS, XLSX o XLSM. La app intenta reconocer automáticamente Fecha, RUN y Valor Cuota.</div>', unsafe_allow_html=True)
-uploaded = st.file_uploader("Archivo CMF", type=["csv", "xls", "xlsx", "xlsm"], label_visibility="collapsed")
+prepare_label = "Preparar captcha CMF"
+if st.session_state.cmf_prepared_date == selected_date and st.session_state.cmf_captcha:
+    prepare_label = "Generar captcha nuevo"
 
-if uploaded is not None:
+if st.button(prepare_label, type="primary", width="stretch"):
+    old = st.session_state.cmf_session
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
+    session = CMFQuotaSession()
     try:
-        frame = parse_quota_file(uploaded.getvalue(), uploaded.name)
-        validation = validate_quota_file(frame, expected_runs)
+        with st.spinner("Abriendo CMF y preparando la consulta..."):
+            prepared = session.prepare(selected_date)
     except Exception as exc:
-        st.error(f"No pude procesar el archivo: {exc}")
-        st.stop()
-
-    latest_date = validation["latest_date"]
-    st.success(f"Archivo leído. Última fecha detectada: {latest_date}")
-
-    a, b, c = st.columns(3)
-    a.metric("Filas válidas", validation["rows"])
-    b.metric("RUN esperados", validation["matched_runs"])
-    c.metric("Cobertura", f"{validation['coverage']:.1%}")
-
-    latest = frame[frame["fecha"] == pd.Timestamp(latest_date)].copy()
-    st.dataframe(latest.head(30), width="stretch", hide_index=True)
-
-    if validation["missing_runs"]:
-        with st.expander(f"RUN faltantes ({len(validation['missing_runs'])})"):
-            st.write(", ".join(validation["missing_runs"]))
-
-    if not validation["ok"]:
-        st.error("La carga no supera los controles mínimos. No se guardará. Se exige al menos 80% de cobertura de los RUN del dashboard y ningún valor cuota no positivo.")
+        try:
+            session.close()
+        except Exception:
+            pass
+        st.session_state.cmf_session = None
+        st.session_state.cmf_captcha = None
+        st.error(f"No pude preparar la consulta CMF: {exc}")
     else:
-        confirm = st.checkbox("Confirmo que este archivo corresponde a la descarga oficial de CMF")
-        if st.button("Guardar actualización", type="primary", width="stretch", disabled=not confirm):
-            saved = persist_quota(frame, uploaded.name, validation)
-            st.success(f"Actualización guardada: {saved['latest_date']} · {saved['matched_runs']}/{saved['expected_runs']} RUN cubiertos.")
-            st.info("La carga válida anterior no se reemplaza hasta que este paso termina correctamente.")
+        st.session_state.cmf_session = session
+        st.session_state.cmf_captcha = prepared.image
+        st.session_state.cmf_prepared_date = selected_date
+        st.rerun()
+
+if st.session_state.cmf_captcha and st.session_state.cmf_prepared_date == selected_date:
+    st.markdown('<div class="step"><strong>2 · Resuelve el captcha</strong><br>Este captcha pertenece a la misma sesión que descargará los datos. Escríbelo y la app hará todo lo demás.</div>', unsafe_allow_html=True)
+    st.image(st.session_state.cmf_captcha, caption=f"Captcha CMF · consulta {selected_date:%d/%m/%Y}", use_container_width=False)
+    captcha_code = st.text_input("Código captcha", placeholder="Escribe el código de la imagen")
+
+    if st.button("Resolver captcha y actualizar", type="primary", width="stretch", disabled=not captcha_code.strip()):
+        session = st.session_state.cmf_session
+        if session is None:
+            st.error("La sesión expiró. Genera un captcha nuevo.")
+        else:
+            try:
+                with st.spinner("Validando captcha, descargando y procesando valores cuota..."):
+                    payload, filename = session.submit_captcha(captcha_code)
+                    frame = parse_quota_file(payload, filename)
+                    validation = validate_quota_file(frame, expected_runs)
+
+                actual_date = pd.Timestamp(validation["latest_date"]).date()
+                if actual_date != selected_date:
+                    raise ValueError(
+                        f"CMF devolvió datos con fecha {actual_date:%d/%m/%Y}, pero pediste {selected_date:%d/%m/%Y}. No se guardó nada."
+                    )
+                if not validation["ok"]:
+                    raise ValueError(
+                        f"La descarga no supera los controles: cobertura {validation['coverage']:.1%}; "
+                        f"RUN cubiertos {validation['matched_runs']}/{validation['expected_runs']}. No se guardó nada."
+                    )
+
+                saved = persist_quota(frame, f"CMF automático · {filename}", validation)
+            except Exception as exc:
+                st.error(str(exc))
+                st.info("Si el captcha estaba mal, pulsa “Generar captcha nuevo” e inténtalo otra vez.")
+            else:
+                st.session_state.cmf_captcha = None
+                st.session_state.cmf_prepared_date = None
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                st.session_state.cmf_session = None
+                st.markdown(
+                    f'<div class="done"><strong>✓ Actualización lista</strong><br>{saved["latest_date"]} · '
+                    f'{saved["matched_runs"]}/{saved["expected_runs"]} RUN cubiertos · '
+                    f'{saved["history_rows"]} filas acumuladas.</div>',
+                    unsafe_allow_html=True,
+                )
+                st.success("No necesitas descargar ni subir ningún archivo.")
 
 st.markdown("### Última carga guardada")
 latest_saved = load_latest_quota()
@@ -117,4 +171,10 @@ else:
         width="stretch",
     )
 
-st.caption("Nota: el captcha se resuelve en el sitio oficial de CMF. La aplicación automatiza la validación y almacenamiento posterior, sin intentar eludir el captcha.")
+with st.expander("Qué hace automáticamente"):
+    st.write(
+        "La aplicación mantiene una sesión de navegador en el servidor, configura la consulta diaria de CMF para la fecha elegida, "
+        "te muestra el captcha de esa misma sesión y, una vez que tú lo resuelves, continúa la consulta, recoge la descarga o tabla "
+        "de resultados, identifica Fecha/RUN/Valor Cuota, valida cobertura y valores positivos y guarda la actualización. El captcha "
+        "siempre lo resuelves tú; la aplicación no intenta eludirlo."
+    )
