@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>{% block title %}BCI Tracking Error{% endblock %}</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root{--navy:#064A91;--blue:#006BFF;--ink:#243746;--muted:#6B7E8B;--line:#D8E2EA;--bg:#F4F7F9;--green:#168A14;--red:#D94B4B;--amber:#FFC400}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .topbar{background:var(--navy);border-bottom:4px solid var(--blue);color:white;padding:14px 22px;display:flex;justify-content:space-between;align-items:center;gap:12px;position:sticky;top:0;z-index:20}
+    .brand{font-weight:800}.nav{display:flex;gap:8px;flex-wrap:wrap}.nav a{color:white;text-decoration:none;background:rgba(255,255,255,.1);padding:8px 11px;border-radius:8px;font-size:14px}
+    .wrap{max-width:1380px;margin:0 auto;padding:18px}.card{background:white;border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+    select,input,button{font:inherit}.control{width:100%;padding:11px 12px;border:1px solid #BFCED9;border-radius:9px;background:white}.btn{border:0;border-radius:9px;padding:11px 14px;background:var(--navy);color:white;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}.btn.secondary{background:#EAF2F8;color:var(--navy)}
+    .grid{display:grid;gap:14px}.kpis{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:14px}.metric{background:white;border:1px solid var(--line);border-radius:10px;padding:13px}.metric small{display:block;color:var(--muted);font-size:12px}.metric strong{display:block;margin-top:4px;font-size:20px;color:var(--navy)}
+    .table-wrap{overflow-x:auto}.risk{width:100%;border-collapse:collapse;min-width:950px}.risk th{background:#405868;color:white;padding:11px 9px;font-size:12px}.risk td{padding:11px 9px;border-bottom:1px solid #EDF2F5;text-align:center;font-size:13px}.risk td:first-child{text-align:left;font-weight:650}.te{background:#E8F2FF;color:var(--blue);font-weight:800}.ret{color:var(--green);font-weight:750}.tag{font-size:11px;color:var(--navy);font-weight:800}.q{display:inline-flex;width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;color:white;font-weight:800}.q1{background:#F6C900;color:#333}.q2{background:#7B94A6}.q3{background:#2F80ED}.q4{background:#D95C5C}
+    .flash{padding:12px 14px;border-radius:9px;margin:10px 0}.flash.success{background:#E8F7EA;color:#176B27}.flash.error{background:#FDECEC;color:#9B2626}.steps{display:grid;gap:12px}.step{background:white;border:1px solid var(--line);border-radius:12px;padding:14px}.captcha{display:block;max-width:100%;border:1px solid var(--line);border-radius:10px;margin:10px 0}
+    .mobile-cards{display:none}.mcard{background:white;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;overflow:hidden}.mhead{padding:12px;border-bottom:1px solid #EDF2F5;display:flex;justify-content:space-between;gap:8px}.mgrid{display:grid;grid-template-columns:1fr 1fr}.mcell{padding:10px 12px;border-bottom:1px solid #EDF2F5}.mcell:nth-child(odd){border-right:1px solid #EDF2F5}.mlabel{font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:800}.mval{font-size:15px;font-weight:700;margin-top:3px}
+    canvas{max-height:340px}
+    @media(max-width:720px){.topbar{padding:10px 12px}.brand{font-size:14px}.nav a{font-size:12px;padding:7px 8px}.wrap{padding:10px}.kpis{grid-template-columns:1fr}.desktop-table{display:none}.mobile-cards{display:block}.card{padding:12px}.mgrid{grid-template-columns:1fr 1fr}.metric strong{font-size:18px}}
+  </style>
+</head>
+<body>
+<header class="topbar"><div class="brand">BCI · Tracking Error Peers</div><nav class="nav"><a href="{{ url_for('dashboard') }}">Dashboard</a><a href="{{ url_for('update_quota') }}">Actualizar cuota</a></nav></header>
+<main class="wrap">
+{% with messages = get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+{% block body %}{% endblock %}
+</main>
+</body></html>
