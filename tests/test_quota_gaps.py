@@ -181,6 +181,26 @@ class CalendarYtdTests(unittest.TestCase):
 
 
 class SeedReturnsTests(unittest.TestCase):
+    def test_fx_only_converts_prom_rows_in_mixed_seed_runtime_history(self):
+        """Las filas CLP de la semilla no se convierten una segunda vez."""
+        frame = pd.DataFrame({
+            "fecha": pd.to_datetime(["2026-07-30", "2026-07-31"]),
+            "run": ["8513", "8513"],
+            "ret_bruta": [0.01, 0.02],
+            "moneda": ["CLP", "PROM"],
+        })
+        old_fx = app_v5.v4._fx_returns_for
+        app_v5.v4._fx_returns_for = lambda index: pd.Series(
+            [0.10], index=pd.DatetimeIndex(["2026-07-31"])
+        )
+        try:
+            result = app_v5.v4._adjust_prom_returns(frame)
+        finally:
+            app_v5.v4._fx_returns_for = old_fx
+
+        self.assertAlmostEqual(float(result.loc["2026-07-30"]), 0.01)
+        self.assertAlmostEqual(float(result.loc["2026-07-31"]), (1.02 * 1.10) - 1.0)
+
     def test_semilla_cubre_el_ano_calendario(self):
         seed = quota_update.load_seed_returns()
         self.assertFalse(seed.empty, "falta seed_gross_returns.csv.gz")

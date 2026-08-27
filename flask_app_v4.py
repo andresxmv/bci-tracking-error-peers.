@@ -160,12 +160,38 @@ def _fx_returns_for(index: pd.DatetimeIndex) -> pd.Series:
 
 
 def _adjust_prom_returns(frame: pd.DataFrame) -> pd.Series:
-    ret = frame.set_index("fecha")["ret_bruta"].astype(float).sort_index()
-    if frame["moneda"].astype(str).str.upper().eq("PROM").any():
-        fx = _fx_returns_for(ret.index)
-        aligned = pd.concat([ret.rename("fund"), fx.rename("fx")], axis=1).dropna()
-        converted = (1.0 + aligned["fund"]) * (1.0 + aligned["fx"]) - 1.0
-        ret.loc[converted.index] = converted
+    if frame is None or frame.empty or not {"fecha", "ret_bruta"}.issubset(frame.columns):
+        return pd.Series(dtype=float)
+
+    prepared = frame.copy()
+    prepared["fecha"] = pd.to_datetime(prepared["fecha"], errors="coerce").dt.normalize()
+    prepared["ret_bruta"] = pd.to_numeric(prepared["ret_bruta"], errors="coerce")
+    prepared = prepared.dropna(subset=["fecha", "ret_bruta"]).sort_values("fecha")
+    # El agregado bruto es único por RUN y fecha. La defensa también cubre
+    # históricos antiguos que todavía puedan traer la misma fecha repetida.
+    prepared = prepared.drop_duplicates("fecha", keep="last")
+    ret = prepared.set_index("fecha")["ret_bruta"].astype(float).sort_index()
+
+    # La semilla versionada ya trae los retornos PROM convertidos a CLP. Una
+    # cartola cargada en runtime conserva MONEDA=PROM; al mezclar ambas fuentes
+    # hay filas CLP y PROM en el mismo RUN. Convertir toda la serie sólo porque
+    # existe un PROM vuelve a convertir los días de la semilla y altera alpha.
+    # Aplicamos FX exclusivamente a las filas que todavía están denominadas en
+    # PROM, dejando intactas las filas CLP.
+    if "moneda" not in prepared.columns:
+        return ret
+    es_prom = prepared["moneda"].astype(str).str.strip().str.upper().eq("PROM")
+    prom_dates = pd.DatetimeIndex(prepared.loc[es_prom, "fecha"].drop_duplicates())
+    if len(prom_dates) == 0:
+        return ret
+    fx = _fx_returns_for(prom_dates)
+    aligned = pd.concat(
+        [ret.reindex(prom_dates).rename("fund"), fx.rename("fx")], axis=1
+    ).dropna()
+    if aligned.empty:
+        return ret
+    converted = (1.0 + aligned["fund"]) * (1.0 + aligned["fx"]) - 1.0
+    ret.loc[converted.index] = converted
     return ret
 
 
