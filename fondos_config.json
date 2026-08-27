@@ -1,0 +1,24 @@
+{
+  "fondos": {
+    "cd_activa": {"nombre":"CD Activa","clase":"Multi-Activos","grupo":"Fondos target risk","bci":"8640","orden":10,"peers":["8448","8740","8993","9193","9473","9576","9648","9873"]},
+    "cd_balanceada": {"nombre":"CD Balanceada","clase":"Multi-Activos","grupo":"Fondos target risk","bci":"8639","orden":20,"peers":["8116","9006","9043","9190","9429","9474","9577","9646"]},
+    "cd_conservadora": {"nombre":"CD Conservadora","clase":"Multi-Activos","grupo":"Fondos target risk","bci":"8638","orden":30,"peers":["8377","8741","9192","9575","9649","9768","9872"]},
+    "cp_activa": {"nombre":"CP Activa","clase":"Multi-Activos","grupo":"Carteras patrimoniales","bci":"9060","orden":31,"peers":["8435","8785","8844","8908"]},
+    "cp_balanceada": {"nombre":"CP Balanceada","clase":"Multi-Activos","grupo":"Carteras patrimoniales","bci":"9062","orden":32,"peers":["8336","8845","8911","8992"]},
+    "cp_conservadora": {"nombre":"CP Conservadora","clase":"Multi-Activos","grupo":"Carteras patrimoniales","bci":"9063","orden":33,"peers":["8306","8295","8773","8910","8994"]},
+    "1_clp": {"nombre":"Estratégico $ H 1 Año","clase":"RFL","grupo":"Fondos renta fija local","bci":"8327","orden":40,"peers":["8274","8280","8304","8316","8352","8615","8755","8902","9106","10026","10208"]},
+    "uf_1": {"nombre":"Estratégico UF H 1 Año","clase":"RFL","grupo":"Fondos renta fija local","bci":"8941","orden":50,"peers":["8127","8986","8991","9291","10261","10461","10515"]},
+    "uf_3": {"nombre":"Estratégico UF H 3 Años","clase":"RFL","grupo":"Fondos renta fija local","bci":"8064","orden":60,"peers":["8077","8106","8118","8141","8152","8263","8317","8853","8897","9084"]},
+    "5h": {"nombre":"Estratégico UF H 5 Años","clase":"RFL","grupo":"Fondos renta fija local","bci":"8108","orden":70,"peers":["8125","8203","8287","8315","8346","8375","8421","8676","9074","9154","9238"]},
+    "5m": {"nombre":"Estratégico UF > 5 Años","clase":"RFL","grupo":"Fondos renta fija local","bci":"8460","orden":80,"peers":["8023","8387","8956","9054","9934"]},
+    "asia": {"nombre":"Asia","clase":"RVI","grupo":"Fondos renta variable","bci":"8514-6","orden":90,"peers":["8457","8517","8820","9023"]},
+    "europa": {"nombre":"Europa","clase":"RVI","grupo":"Fondos renta variable","bci":"8513","orden":100,"peers":["8097","8114","8129","8456","8484","9027","9187","9254"]},
+    "emergente_global": {"nombre":"Emergente Global","clase":"RVI","grupo":"Fondos renta variable","bci":"8625","orden":110,"peers":["8054","8058","8299","8323","8916","9024","9922","9987"]},
+    "estados_unidos": {"nombre":"Estados Unidos","clase":"RVI","grupo":"Fondos renta variable","bci":"8712","orden":120,"peers":["8078","8183","8205","8300","8437","8458","8479","8480","8915","8987","9932"]},
+    "global_titan": {"nombre":"Global Titan","clase":"RVI","grupo":"Fondos renta variable","bci":"8710","orden":130,"peers":["8088","8090","8301","8427","8621","8707","8744","8822","8924","8971","9005","9931","10009"]},
+    "acciones_chilenas": {"nombre":"Acciones Chilenas","clase":"RVI","grupo":"Fondos renta variable","bci":"8430","orden":140,"benchmark":{"indice":"IPSA Index","moneda":"CLP"}},
+    "top_picks": {"nombre":"Top Picks","clase":"RVI","grupo":"Fondos renta variable","bci":"8787","orden":150,"benchmark":{"indice":"IPSA Index","moneda":"CLP"}},
+    "acciones_globales": {"nombre":"Acciones Globales","clase":"RVI","grupo":"Fondos renta variable","bci":"9372","orden":160,"benchmark":{"indice":"ACWI US Equity","moneda":"CLP"}},
+    "america_latina": {"nombre":"América Latina","clase":"RVI","grupo":"Fondos renta variable","bci":"8434","orden":170,"te_anualizado":false,"benchmark":{"indice":"MXLA104N Index","moneda":"CLP"}}
+  }
+}
