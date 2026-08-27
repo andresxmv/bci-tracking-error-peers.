@@ -21,8 +21,11 @@ CMF_HEADERS = {
     ),
     "Referer": CMF_FORM,
 }
-CMF_PROXY_URL = os.getenv("CMF_PROXY_URL", "").strip()
-CMF_PROXY_KEY = os.getenv("CMF_PROXY_KEY", "").strip()
+CMF_PROXY_URL = os.getenv(
+    "CMF_PROXY_URL",
+    "https://nusycxhrfynrrbvdiiko.supabase.co/functions/v1/cmf-cartola-proxy",
+).strip()
+CMF_PROXY_KEY = os.getenv("CMF_PROXY_KEY", "bci-tracking-error-peers-v1").strip()
 
 
 class CMFAutomationError(RuntimeError):
