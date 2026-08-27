@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import pandas as pd
 
 import flask_app_v4 as v4
@@ -113,6 +114,76 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     return corrected
 
 
+def _last_level_on_or_before(levels: pd.DataFrame, column: str, target: pd.Timestamp) -> float | None:
+    if column not in levels.columns:
+        return None
+    series = levels[column].dropna().sort_index()
+    prior = series.loc[:pd.Timestamp(target).normalize()]
+    if prior.empty:
+        return None
+    return float(prior.iloc[-1])
+
+
+def _correct_custom_calendar_ytd(
+    name: str,
+    cfg: dict,
+    live_ref: dict,
+    peer_runs: list[str],
+) -> dict:
+    """Alinea un escenario personalizado al YTD calendario validado.
+
+    ``compute_custom_reference`` mantiene sus fórmulas de TE/IR/alpha y usa
+    niveles normalizados que comienzan en mayo. Para un corte anterior al
+    baseline, ese fallback no es un YTD calendario: equivale a retorno desde
+    mayo. Aquí sólo cambiamos el ancla de los campos YTD, usando el retorno
+    relativo entre el corte y el baseline. El escenario a la fecha baseline
+    queda exactamente en el YTD validado del panel.
+    """
+    baseline = BASELINE_REFERENCE.get(name)
+    if not baseline or not live_ref:
+        return live_ref
+
+    baseline_date = pd.Timestamp(baseline.get("Fecha")).normalize()
+    reference_date = pd.Timestamp(live_ref.get("Fecha", baseline_date)).normalize()
+    levels = v4.live_category_levels(name, peer_runs)
+    bci_col, peer_cols = v4._columns_for_peers(name, levels, peer_runs)
+    if levels.empty or bci_col is None or not peer_cols:
+        return live_ref
+
+    required = [bci_col, *peer_cols]
+    factors: dict[str, float] = {}
+    for column in required:
+        base_level = _last_level_on_or_before(levels, column, baseline_date)
+        cut_level = _last_level_on_or_before(levels, column, reference_date)
+        if base_level is None or cut_level is None or base_level <= 0 or cut_level <= 0:
+            continue
+        if reference_date <= baseline_date:
+            factors[column] = base_level / cut_level
+        else:
+            factors[column] = cut_level / base_level
+
+    bci_factor = factors.get(bci_col)
+    base_port = baseline.get("Retorno YTD")
+    if bci_factor is None or base_port is None or pd.isna(base_port):
+        return live_ref
+
+    corrected = dict(live_ref)
+    corrected["Retorno YTD"] = (1.0 + float(base_port)) * (
+        1.0 / bci_factor if reference_date <= baseline_date else bci_factor
+    ) - 1.0
+
+    base_bench = baseline.get("Retorno benchmark YTD")
+    bench_factors = [factors[column] for column in required if column in factors]
+    if base_bench is not None and not pd.isna(base_bench) and bench_factors:
+        bench_factor = float(np.mean(bench_factors))
+        benchmark_ytd = (1.0 + float(base_bench)) * (
+            1.0 / bench_factor if reference_date <= baseline_date else bench_factor
+        ) - 1.0
+        corrected["Retorno benchmark YTD"] = float(benchmark_ytd)
+        corrected["Alpha YTD"] = float(corrected["Retorno YTD"] - benchmark_ytd)
+    return corrected
+
+
 def compute_reference(
     name: str,
     peer_runs: list[str] | None = None,
@@ -124,7 +195,8 @@ def compute_reference(
 
     if peer_runs is not None or cutoff_date is not None:
         effective_peers = peer_runs if peer_runs is not None else [str(run) for run in cfg.get("peers", [])]
-        return v4.compute_custom_reference(name, effective_peers, cutoff_date)
+        custom = v4.compute_custom_reference(name, effective_peers, cutoff_date)
+        return _correct_custom_calendar_ytd(name, cfg, custom, effective_peers) if custom else None
 
     try:
         live = v4.compute_live_reference(name)

@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 import pandas as pd
 
 from flask_app_v4 import _merge_return_segments
+import flask_app_v5 as app_v5
 import quota_update
 from quota_update import gross_fund_returns
 
@@ -69,6 +70,31 @@ class QuotaGapTests(unittest.TestCase):
                 self.assertAlmostEqual(float(result.iloc[0].ret_bruta), 0.02)
             finally:
                 quota_update.GROSS_RETURNS_PATH = old_path
+
+    def test_custom_cutoff_uses_calendar_ytd_baseline(self):
+        levels = pd.DataFrame(
+            {
+                "9060-FM BCI CP ACTIVA": [100.0, 110.0],
+                "8908-BANKING AGRESIVO": [100.0, 110.0],
+                "8435-AGRESIVO ESTRAT\u00c9GICO": [100.0, 110.0],
+                "8785-BICE AGRESIVO": [100.0, 110.0],
+                "8844-PERFIL A": [100.0, 110.0],
+                "10064-CARTERA AGRESIVO": [100.0, 110.0],
+            },
+            index=pd.to_datetime(["2026-07-31", "2026-08-21"]),
+        )
+        old_levels = app_v5.v4.live_category_levels
+        app_v5.v4.live_category_levels = lambda name, peer_runs=None: levels.copy()
+        try:
+            cfg = app_v5.base.config_by_name("CP Activa")[1]
+            live = {"Fecha": pd.Timestamp("2026-07-31"), "Retorno YTD": 0.0219}
+            corrected = app_v5._correct_custom_calendar_ytd(
+                "CP Activa", cfg, live, cfg["peers"]
+            )
+            expected = (1.0 + app_v5.BASELINE_REFERENCE["CP Activa"]["Retorno YTD"]) / 1.1 - 1.0
+            self.assertAlmostEqual(float(corrected["Retorno YTD"]), expected)
+        finally:
+            app_v5.v4.live_category_levels = old_levels
 
     def test_cached_cartola_date_is_detected(self):
         with TemporaryDirectory() as temp:
