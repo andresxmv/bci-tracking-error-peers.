@@ -35,7 +35,7 @@ class QuotaGapTests(unittest.TestCase):
         self.assertAlmostEqual(float(result.iloc[0].ret_bruta), 0.01)
         self.assertAlmostEqual(float(result.iloc[1].ret_bruta), 0.01)
 
-    def test_historical_block_overwrites_cutoff_without_reusing_gap(self):
+    def test_historical_block_keeps_cutoff_and_resets_overlap_anchor(self):
         levels = pd.DataFrame(
             {"8640-FONDO": [100.0, 999.0, 110.0]},
             index=pd.to_datetime(["2026-07-24", "2026-07-31", "2026-08-14"]),
@@ -45,9 +45,30 @@ class QuotaGapTests(unittest.TestCase):
             index=pd.to_datetime(["2026-07-27", "2026-07-31", "2026-08-24", "2026-08-25"]),
         )
         merged = _merge_return_segments(levels, "8640-FONDO", returns, pd.Timestamp("2026-08-21"))
-        self.assertAlmostEqual(float(merged.loc["2026-07-31", "8640-FONDO"]), 102.01)
+        # El 31-07 ya existe en la serie validada: la cartola solapada no lo
+        # vuelve a capitalizar ni cambia el YTD del corte.
+        self.assertAlmostEqual(float(merged.loc["2026-07-31", "8640-FONDO"]), 999.0)
         self.assertAlmostEqual(float(merged.loc["2026-08-21", "8640-FONDO"]), 110.0)
         self.assertAlmostEqual(float(merged.loc["2026-08-25", "8640-FONDO"]), 116.655)
+
+    def test_gross_history_deduplicates_run_date(self):
+        with TemporaryDirectory() as temp:
+            gross_path = Path(temp) / "gross_returns_history.csv"
+            pd.DataFrame({
+                "fecha": ["2026-07-31", "2026-07-31", "2026-08-01"],
+                "run": ["9060", "9060", "9060"],
+                "ret_bruta": [0.01, 0.02, 0.03],
+                "moneda": ["$$", "$$", "$$"],
+            }).to_csv(gross_path, index=False)
+            old_path = quota_update.GROSS_RETURNS_PATH
+            quota_update.GROSS_RETURNS_PATH = gross_path
+            try:
+                result = quota_update.load_gross_returns()
+                self.assertEqual(result[["fecha", "run"]].drop_duplicates().shape[0], 2)
+                self.assertEqual(result["fecha"].dt.strftime("%Y-%m-%d").tolist(), ["2026-07-31", "2026-08-01"])
+                self.assertAlmostEqual(float(result.iloc[0].ret_bruta), 0.02)
+            finally:
+                quota_update.GROSS_RETURNS_PATH = old_path
 
     def test_cached_cartola_date_is_detected(self):
         with TemporaryDirectory() as temp:

@@ -340,6 +340,18 @@ def load_gross_returns() -> pd.DataFrame:
     if not GROSS_RETURNS_PATH.exists():
         return pd.DataFrame(columns=["fecha", "run", "ret_bruta", "moneda"])
     frame = pd.read_csv(GROSS_RETURNS_PATH, parse_dates=["fecha"])
+    if "fecha" in frame.columns:
+        frame["fecha"] = pd.to_datetime(frame["fecha"], errors="coerce").dt.normalize()
     if "run" in frame.columns:
         frame["run"] = frame["run"].map(normalize_run)
-    return frame
+    if {"fecha", "run", "ret_bruta"}.issubset(frame.columns):
+        frame["ret_bruta"] = pd.to_numeric(frame["ret_bruta"], errors="coerce")
+        frame = frame.dropna(subset=["fecha", "run", "ret_bruta"])
+        # El agregado bruto es único por RUN y fecha. Esto limpia históricos
+        # creados antes de que persist_quota recompusiera todo el archivo y
+        # evita que el mismo 31-07 se capitalice más de una vez.
+        frame = (
+            frame.sort_values(["fecha", "run"])
+            .drop_duplicates(["fecha", "run"], keep="last")
+        )
+    return frame.reset_index(drop=True)

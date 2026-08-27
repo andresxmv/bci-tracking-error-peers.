@@ -27,6 +27,7 @@ def _post_baseline_returns(cfg: dict, baseline_date: pd.Timestamp, reference_dat
     gross["fecha"] = pd.to_datetime(gross["fecha"], errors="coerce").dt.normalize()
     gross["run_norm"] = gross["run"].astype(str).map(normalize_run)
     gross = gross[(gross["fecha"] > baseline_date) & (gross["fecha"] <= reference_date)]
+    gross = gross.drop_duplicates(["fecha", "run_norm"], keep="last")
 
     out: dict[str, pd.Series] = {}
     for run in [cfg.get("bci"), *cfg.get("peers", [])]:

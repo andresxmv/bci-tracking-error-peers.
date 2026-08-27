@@ -157,11 +157,23 @@ def _merge_return_segments(
     returns: pd.Series,
     baseline_date: pd.Timestamp | None,
 ) -> pd.DataFrame:
-    """Incorpora bloques contiguos sin aplicar retornos sobre períodos solapados."""
+    """Incorpora bloques contiguos sin volver a componer cierres existentes.
+
+    Las series embebidas contienen cierres semanales ya validados (incluido el
+    31-07). Una cartola con solape vuelve a traer esos mismos días; si se
+    capitaliza el retorno sobre un cierre que ya existe, el nivel queda
+    duplicado y el YTD del corte cambia. Los cierres existentes son, por tanto,
+    anclas autoritativas: se conservan y el nivel acumulado se reinicia allí.
+    """
     returns = pd.to_numeric(returns, errors="coerce").dropna().sort_index()
     if returns.empty:
         return levels
     returns.index = pd.to_datetime(returns.index).normalize()
+    # Un archivo histórico antiguo puede contener más de un retorno por
+    # RUN/fecha. El retorno diario del RUN es único; conservar el último valor
+    # evita capitalizar dos veces el mismo día.
+    if returns.index.has_duplicates:
+        returns = returns.groupby(level=0, sort=True).last()
     segment = returns.index.to_series().diff().dt.days.gt(7).cumsum().to_numpy()
     for _, block in returns.groupby(segment):
         first_date = pd.Timestamp(block.index.min()).normalize()
@@ -182,8 +194,16 @@ def _merge_return_segments(
             levels.loc[baseline, column] = current
 
         for dt, ret in block.items():
+            dt = pd.Timestamp(dt).normalize()
+            # No sobrescribimos un cierre que ya estaba en la historia
+            # validada (o que fue cargado previamente). Reiniciar `current`
+            # aquí también evita arrastrar un retorno compuesto sobre el mismo
+            # 31-07 hacia los días posteriores del bloque.
+            if dt in levels.index and pd.notna(levels.at[dt, column]):
+                current = float(levels.at[dt, column])
+                continue
             current *= 1.0 + float(ret)
-            levels.loc[pd.Timestamp(dt), column] = current
+            levels.loc[dt, column] = current
     return levels
 
 
@@ -220,6 +240,9 @@ def live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.D
             continue
         sub["fecha"] = pd.to_datetime(sub["fecha"], errors="coerce").dt.normalize()
         sub = sub.dropna(subset=["fecha", "ret_bruta"]).sort_values("fecha")
+        # Defensa adicional para archivos generados por versiones anteriores:
+        # live_category_levels debe recibir un único retorno por RUN y fecha.
+        sub = sub.drop_duplicates(["fecha", "run"], keep="last")
         returns = _adjust_prom_returns(sub)
         if col is None and not returns.empty:
             # Para RUN nuevos del Excel sin serie embebida, el primer nivel es
