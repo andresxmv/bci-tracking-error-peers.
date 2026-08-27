@@ -32,11 +32,11 @@ CMF_SESSIONS: dict[str, CMFQuotaSession] = {}
 def load_data():
     metrics = json.loads(gzip.decompress(base64.b64decode(METRICS_GZ_B64)).decode("utf-8"))
     historical = json.loads(gzip.decompress(base64.b64decode(SERIES_GZ_B64)).decode("utf-8"))
-    df = pd.DataFrame(metrics)
+    frame = pd.DataFrame(metrics)
     for col in ["te_ewma_anual", "te_equiponderado_anual", "IR", "ret_1y_fondo", "ret_1y_pares", "vol_anual", "exceso_1y"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["es_bci"] = df["es_bci"].astype(bool)
-    return df, historical
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    frame["es_bci"] = frame["es_bci"].astype(bool)
+    return frame, historical
 
 
 df, series = load_data()
@@ -46,15 +46,80 @@ EXPECTED_RUNS = {normalize_run(x) for x in df["run"].dropna().astype(str)}
 def pct(x, digits=2, signed=False):
     if pd.isna(x):
         return "—"
-    v = x * 100
+    v = float(x) * 100
     s = f"{v:+.{digits}f}" if signed else f"{v:.{digits}f}"
     return s.replace(".", ",") + "%"
 
 
-def quartile(rank, n):
-    if pd.isna(rank) or not n:
+def number(x, digits=2):
+    if pd.isna(x):
+        return "—"
+    return f"{float(x):.{digits}f}".replace(".", ",")
+
+
+def percentile_high_good(values: pd.Series, value: float) -> float | None:
+    clean = pd.to_numeric(values, errors="coerce").dropna()
+    if clean.empty or pd.isna(value):
         return None
-    return max(1, min(4, math.ceil(float(rank) / n * 4)))
+    return float((clean <= float(value)).mean() * 100.0)
+
+
+def quartile_from_percentile(p: float | None) -> int | None:
+    if p is None or pd.isna(p):
+        return None
+    if p >= 75:
+        return 1
+    if p >= 50:
+        return 2
+    if p >= 25:
+        return 3
+    return 4
+
+
+def run_from_series_col(col: str) -> str:
+    return str(col).split("-", 1)[0].strip()
+
+
+def category_levels(category: str) -> pd.DataFrame:
+    g = df[df.categoria == category]
+    if g.empty:
+        return pd.DataFrame()
+    payload = series.get(str(g.archivo.iloc[0]))
+    if not payload:
+        return pd.DataFrame()
+    levels = pd.DataFrame(payload["valores"], index=pd.to_datetime(payload["fechas"]))
+    return levels.apply(pd.to_numeric, errors="coerce").sort_index()
+
+
+def map_run_to_col(levels: pd.DataFrame) -> dict[str, str]:
+    return {run_from_series_col(c): c for c in levels.columns}
+
+
+def ytd_metrics(category: str) -> pd.DataFrame:
+    g = df[df.categoria == category].copy()
+    levels = category_levels(category)
+    if g.empty or levels.empty:
+        return pd.DataFrame()
+    end = levels.index.max()
+    year_levels = levels[levels.index.year == end.year]
+    if year_levels.empty:
+        return pd.DataFrame()
+    first = year_levels.iloc[0]
+    last = year_levels.iloc[-1]
+    rets = last / first - 1.0
+    run_map = map_run_to_col(levels)
+    rows = []
+    for _, r in g.iterrows():
+        run = str(r.run)
+        col = run_map.get(run)
+        if not col or col not in rets.index:
+            continue
+        fund_ret = float(rets[col])
+        peer_cols = [run_map.get(str(x)) for x in g.run if str(x) != run]
+        peer_cols = [c for c in peer_cols if c in rets.index]
+        peer_ret = float(rets[peer_cols].mean()) if peer_cols else float("nan")
+        rows.append({"run": run, "ret_ytd": fund_ret, "peer_ytd": peer_ret, "alpha_ytd": fund_ret - peer_ret})
+    return pd.DataFrame(rows)
 
 
 def ewma_tracking_error(active: pd.Series, lam: float = .94) -> float:
@@ -68,61 +133,94 @@ def ewma_tracking_error(active: pd.Series, lam: float = .94) -> float:
     return math.sqrt(max(var, 0)) * math.sqrt(52)
 
 
-def historical_te(category: str):
+def historical_te(category: str, selected_run: str):
     g = df[df.categoria == category].copy()
-    if g.empty:
+    levels = category_levels(category)
+    if g.empty or levels.empty:
         return {"labels": [], "bci": [], "p75": []}
-    payload = series.get(str(g.archivo.iloc[0]))
-    if not payload:
-        return {"labels": [], "bci": [], "p75": []}
-    levels = pd.DataFrame(payload["valores"], index=pd.to_datetime(payload["fechas"]))
-    levels = levels.apply(pd.to_numeric, errors="coerce").dropna(how="any")
     returns = levels.pct_change(fill_method=None).dropna(how="any")
     if returns.shape[0] < 8:
         return {"labels": [], "bci": [], "p75": []}
     out = pd.DataFrame(index=returns.index, columns=returns.columns, dtype=float)
     for i in range(7, len(returns)):
-        window = returns.iloc[:i+1].tail(52)
+        window = returns.iloc[: i + 1].tail(52)
         for fund in returns.columns:
             peers = [c for c in returns.columns if c != fund]
             out.loc[returns.index[i], fund] = ewma_tracking_error(window[fund] - window[peers].mean(axis=1))
     out = out.dropna(how="all")
     p75 = out.quantile(.75, axis=1)
-    bci_run = str(g[g.es_bci].run.iloc[0]) if g.es_bci.any() else None
-    bci_col = None
-    if bci_run:
-        for c in out.columns:
-            if str(c).split("-", 1)[0].strip() == bci_run:
-                bci_col = c
-                break
+    selected_col = next((c for c in out.columns if run_from_series_col(c) == selected_run), None)
+    chosen = out[selected_col] if selected_col else pd.Series(index=out.index, dtype=float)
     return {
         "labels": [d.strftime("%d-%m-%Y") for d in out.index],
-        "bci": [None if pd.isna(v) else round(float(v) * 100, 4) for v in (out[bci_col] if bci_col else pd.Series(index=out.index, dtype=float))],
+        "bci": [None if pd.isna(v) else round(float(v) * 100, 4) for v in chosen],
         "p75": [None if pd.isna(v) else round(float(v) * 100, 4) for v in p75],
+    }
+
+
+def fund_dashboard(selected_run: str):
+    bci = df[df.es_bci].copy()
+    row_df = bci[bci.run.astype(str) == str(selected_run)]
+    if row_df.empty:
+        row_df = bci.iloc[[0]]
+    row = row_df.iloc[0]
+    category = row.categoria
+    peers = df[df.categoria == category].copy()
+
+    p1y = percentile_high_good(peers.exceso_1y, row.exceso_1y)
+    q1y = quartile_from_percentile(p1y)
+
+    ytd = ytd_metrics(category)
+    selected_ytd = ytd[ytd.run.astype(str) == str(row.run)] if not ytd.empty else pd.DataFrame()
+    ret_ytd = alpha_ytd = float("nan")
+    pytd = None
+    qytd = None
+    if not selected_ytd.empty:
+        ret_ytd = float(selected_ytd.ret_ytd.iloc[0])
+        alpha_ytd = float(selected_ytd.alpha_ytd.iloc[0])
+        pytd = percentile_high_good(ytd.alpha_ytd, alpha_ytd)
+        qytd = quartile_from_percentile(pytd)
+
+    peer_table = peers[["fondo", "run", "es_bci", "exceso_1y", "IR", "te_ewma_anual"]].copy()
+    peer_table["percentil_alpha_1y"] = peer_table.exceso_1y.rank(pct=True, method="average") * 100
+    peer_table = peer_table.sort_values("exceso_1y", ascending=False)
+    peer_rows = []
+    for _, p in peer_table.iterrows():
+        peer_rows.append({
+            "fondo": p.fondo,
+            "es_bci": bool(p.es_bci),
+            "alpha": pct(p.exceso_1y, 2, True),
+            "ir": number(p.IR, 2),
+            "mer": pct(p.te_ewma_anual, 2),
+            "percentil": f"{p.percentil_alpha_1y:.0f}",
+        })
+
+    return {
+        "run": str(row.run),
+        "fondo": row.fondo,
+        "categoria": category,
+        "grupo": row.grupo,
+        "mer": pct(row.te_ewma_anual, 2),
+        "ret_ytd": pct(ret_ytd, 2, True),
+        "alpha_1y": pct(row.exceso_1y, 2, True),
+        "alpha_ytd": pct(alpha_ytd, 2, True),
+        "ir_12m": number(row.IR, 2),
+        "percentil_1y": "—" if p1y is None else f"{p1y:.0f}",
+        "cuartil_1y": q1y,
+        "percentil_ytd": "—" if pytd is None else f"{pytd:.0f}",
+        "cuartil_ytd": qytd,
+        "peer_rows": peer_rows,
+        "chart": historical_te(category, str(row.run)),
     }
 
 
 @app.get("/")
 def dashboard():
-    categories = sorted(df.categoria.unique())
-    category = request.args.get("categoria") or categories[0]
-    g = df[df.categoria == category].sort_values("te_ewma_anual", ascending=False).copy()
-    rows = []
-    for _, r in g.iterrows():
-        n = len(g)
-        rows.append({
-            "fondo": r.fondo,
-            "grupo": r.grupo,
-            "es_bci": bool(r.es_bci),
-            "te": pct(r.te_ewma_anual, 2),
-            "te2": pct(r.te_equiponderado_anual, 2),
-            "alpha": pct(r.exceso_1y, 2, True),
-            "ir": "—" if pd.isna(r.IR) else f"{r.IR:.2f}".replace(".", ","),
-            "vol": pct(r.vol_anual, 1),
-            "ret": pct(r.ret_1y_fondo, 1),
-            "q": quartile(r.get("rank"), n),
-        })
-    return render_template("dashboard.html", categories=categories, category=category, rows=rows, chart=historical_te(category), status=load_status())
+    bci = df[df.es_bci].sort_values("fondo").copy()
+    funds = [{"run": str(r.run), "fondo": r.fondo, "categoria": r.categoria} for _, r in bci.iterrows()]
+    selected_run = request.args.get("fondo") or funds[0]["run"]
+    selected = fund_dashboard(selected_run)
+    return render_template("dashboard.html", funds=funds, selected=selected, status=load_status())
 
 
 @app.route("/login", methods=["GET", "POST"])
