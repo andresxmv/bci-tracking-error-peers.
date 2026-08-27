@@ -45,12 +45,11 @@ def _compound(s: pd.Series) -> float:
 
 
 def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
-    """Actualiza YTD desde el YTD validado del ZIP, no desde la ventana de 52 semanas.
+    """YTD = 31-12 previo hasta la última cartola disponible.
 
-    panel_metrics_reference.json contiene el YTD correcto al corte original
-    (21-08-2026 en CP Activa). Solo se compone el retorno de cartolas CMF
-    posterior a ese corte. Así el cache de 52 semanas queda exclusivamente para
-    TE/IR y nunca vuelve a ser la base del YTD.
+    El YTD validado del panel de referencia es la base al corte histórico
+    original. Después se compone exclusivamente con los retornos CMF posteriores
+    a ese corte. Nunca se usa la ventana de 52 semanas como base del YTD.
     """
     baseline = base.REFERENCE.get(name)
     if not baseline:
@@ -70,9 +69,6 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     post_port = _compound(post.get(bci_run, pd.Series(dtype=float)))
     portfolio_ytd = (1.0 + float(base_port)) * (1.0 + post_port) - 1.0
 
-    # Benchmark del proyecto = BCI + peers equiponderados. Partimos del YTD
-    # benchmark validado al corte original y componemos el retorno diario
-    # equiponderado observado después del corte.
     base_bench = baseline.get("Retorno benchmark YTD")
     benchmark_ytd = float("nan")
     if base_bench is not None and not pd.isna(base_bench):
@@ -83,10 +79,7 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
             if s is not None and not s.empty:
                 pieces.append(s.rename(run_norm))
         if pieces:
-            daily = pd.concat(pieces, axis=1).sort_index()
-            # Solo días con información de todos los fondos disponibles para no
-            # sesgar el promedio por faltantes.
-            daily = daily.dropna(how="any")
+            daily = pd.concat(pieces, axis=1).sort_index().dropna(how="any")
             bench_post = _compound(daily.mean(axis=1)) if not daily.empty else 0.0
         else:
             bench_post = 0.0
@@ -99,14 +92,11 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
         corrected["Retorno benchmark YTD"] = float(benchmark_ytd)
         corrected["Alpha YTD"] = float(portfolio_ytd - benchmark_ytd)
 
-    # Percentil/cuarto requieren YTD individual de cada peer previo al corte.
-    # Si no existe esa historia completa en runtime, conservar el valor validado
-    # es preferible a inventarlo desde la ventana de 52 semanas.
     corrected["Percentil YTD"] = baseline.get("Percentil YTD")
     corrected["Cuartil YTD"] = baseline.get("Cuartil YTD")
 
-    # TE e IR son semanales. Mientras no exista un nuevo viernes completo desde
-    # el corte base, conservar el valor validado del último cierre semanal.
+    # TE e IR son semanales: antes del próximo viernes completo conservamos el
+    # último cierre semanal validado, no un valor fabricado con días parciales.
     next_friday = baseline_date + pd.offsets.Week(weekday=4)
     if reference_date < next_friday:
         corrected["TE EWMA anual"] = baseline.get("TE EWMA anual")
@@ -139,6 +129,15 @@ def recompute_all_metrics() -> dict[str, dict]:
             refreshed[item["fondo"]] = ref
     LIVE_REFERENCES.clear()
     LIVE_REFERENCES.update(refreshed)
+    cp = LIVE_REFERENCES.get("CP Activa", {})
+    print(
+        "LIVE_VERIFY_CP_ACTIVA",
+        "fecha=", cp.get("Fecha"),
+        "ytd=", cp.get("Retorno YTD"),
+        "alpha_ytd=", cp.get("Alpha YTD"),
+        "ir=", cp.get("Information Ratio"),
+        flush=True,
+    )
     return LIVE_REFERENCES
 
 
@@ -185,7 +184,7 @@ def live_fund_dashboard(selected_run: str):
 
 
 def verified_health():
-    """Healthcheck también valida que CP Activa no vuelva al falso YTD ~3,79%."""
+    """Healthcheck falla si CP Activa vuelve al YTD falso cercano a 3,79%."""
     ref = compute_live_reference("CP Activa") or {}
     ytd = ref.get("Retorno YTD")
     dt = ref.get("Fecha")
@@ -198,6 +197,7 @@ def verified_health():
         "cp_activa_alpha_ytd": ref.get("Alpha YTD"),
         "cp_activa_ir": ref.get("Information Ratio"),
     }
+    print("LIVE_HEALTH", payload, flush=True)
     return (payload, 200 if payload["ok"] else 500)
 
 
@@ -206,9 +206,17 @@ base.compute_live_reference = compute_live_reference
 base.fund_dashboard = live_fund_dashboard
 recompute_all_metrics()
 
-# Reemplaza el view existente de /health sin registrar una ruta duplicada.
 if "health" in app.view_functions:
     app.view_functions["health"] = verified_health
+
+
+@app.after_request
+def _disable_browser_cache(response):
+    # El dashboard es server-side y debe reflejar siempre la última cartola.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 if __name__ == "__main__":
