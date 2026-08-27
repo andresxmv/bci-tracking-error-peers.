@@ -1,27 +1,48 @@
 {% extends 'base.html' %}{% block title %}BCI · Fondos{% endblock %}{% block body %}
+<style>
+  .finance-hero{position:relative;overflow:hidden;min-height:230px;border-radius:20px;margin-bottom:14px;background:linear-gradient(135deg,rgba(7,20,34,.96),rgba(10,36,57,.92));border:1px solid rgba(89,190,255,.18);box-shadow:0 28px 70px rgba(0,0,0,.22)}
+  #risk3d{position:absolute;inset:0;width:100%;height:100%;display:block;max-height:none}
+  .hero-overlay{position:relative;z-index:2;padding:28px 30px;display:flex;justify-content:space-between;gap:20px;min-height:230px;align-items:flex-end;pointer-events:none}
+  .hero-copy{max-width:610px}.eyebrow{font-size:10px;font-weight:850;letter-spacing:.22em;color:#75caf7;text-transform:uppercase;margin-bottom:10px}.hero-copy h1{font-size:34px;line-height:1.04;margin:0;letter-spacing:-.04em}.hero-copy p{color:#9cb5c7;font-size:13px;line-height:1.55;margin:12px 0 0;max-width:520px}.hero-badge{align-self:flex-start;background:rgba(8,24,38,.62);border:1px solid rgba(112,201,255,.18);border-radius:14px;padding:12px 14px;backdrop-filter:blur(10px);min-width:170px}.hero-badge small{display:block;color:#88a8bb;font-size:10px;text-transform:uppercase;letter-spacing:.08em}.hero-badge strong{display:block;margin-top:5px;font-size:17px}.live-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#52d890;box-shadow:0 0 12px rgba(82,216,144,.65);margin-right:7px}
+  .section-title{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}.section-title h3{margin:0;font-size:15px;letter-spacing:-.01em}.section-title span{font-size:11px;color:var(--muted)}
+  .chart-card{position:relative;overflow:hidden}.chart-card:before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(61,179,247,.02),transparent 55%);pointer-events:none}.chart-wrap{position:relative;height:325px}
+  .fund-card{background:linear-gradient(145deg,rgba(17,41,63,.9),rgba(9,25,40,.86));border-color:rgba(89,190,255,.18)}
+  .fund-title{font-size:28px;margin:4px 0 3px;letter-spacing:-.035em}.fund-meta{color:var(--muted);font-size:12px}.date-pill{display:inline-flex;align-items:center;gap:8px;padding:8px 11px;border-radius:11px;background:rgba(77,181,242,.07);border:1px solid rgba(94,190,248,.15);font-size:12px;color:#bce9ff}.date-pill:before{content:"";width:6px;height:6px;border-radius:50%;background:#4cbfff;box-shadow:0 0 10px #4cbfff}
+  @media(max-width:720px){.finance-hero{min-height:210px}.hero-overlay{min-height:210px;padding:22px 18px;align-items:flex-end}.hero-copy h1{font-size:27px}.hero-copy p{font-size:11px;max-width:78%}.hero-badge{position:absolute;right:14px;top:14px;min-width:0;padding:9px 10px}.hero-badge strong{font-size:13px}.chart-wrap{height:260px}.fund-title{font-size:23px}}
+</style>
+
+<section class="finance-hero">
+  <canvas id="risk3d" aria-label="Superficie tridimensional de riesgo"></canvas>
+  <div class="hero-overlay">
+    <div class="hero-copy">
+      <div class="eyebrow">Portfolio Risk Intelligence</div>
+      <h1>Tracking Error<br>Peer Analytics</h1>
+      <p>Una vista institucional del riesgo relativo, retorno YTD y eficiencia frente al peer group. La superficie 3D responde suavemente al movimiento y representa una malla dinámica de riesgo.</p>
+    </div>
+    <div class="hero-badge">
+      <small>Estado de datos</small>
+      <strong><span class="live-dot"></span>{{ status.latest_date if status and status.latest_date else '2026-08-21' }}</strong>
+    </div>
+  </div>
+</section>
+
 <div class="card" style="margin-bottom:14px">
   <form method="get">
-    <label style="font-size:12px;color:var(--muted);font-weight:800">FONDO BCI</label>
+    <label style="font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.07em">FONDO BCI</label>
     <select class="control" name="fondo" onchange="this.form.submit()">
       {% for f in funds %}<option value="{{ f.run }}" {% if f.run==selected.run %}selected{% endif %}>{{ f.fondo }} · {{ f.categoria }}</option>{% endfor %}
     </select>
   </form>
 </div>
 
-<div class="card" style="margin-bottom:14px;padding:12px 16px;border-left:4px solid var(--blue)">
-  <div style="font-size:12px;color:var(--muted);font-weight:800">FECHA DE CIERRE MOSTRADA</div>
-  <div style="font-size:18px;font-weight:800;margin-top:3px">{{ status.latest_date if status and status.latest_date else '2026-08-21' }}</div>
-  <div style="font-size:12px;color:var(--muted);margin-top:2px">Métricas y comparaciones calculadas con información disponible hasta esta fecha.</div>
-</div>
-
-<div class="card" style="margin-bottom:14px">
+<div class="card fund-card" style="margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
     <div>
-      <div style="font-size:12px;color:var(--muted);font-weight:800">FONDO BCI SELECCIONADO</div>
-      <h2 style="margin:4px 0 2px">{{ selected.fondo }}</h2>
-      <div style="color:var(--muted);font-size:13px">{{ selected.categoria }} · RUN {{ selected.run }}</div>
+      <div style="font-size:10px;color:var(--muted);font-weight:800;letter-spacing:.1em">FONDO BCI SELECCIONADO</div>
+      <h2 class="fund-title">{{ selected.fondo }}</h2>
+      <div class="fund-meta">{{ selected.categoria }} · RUN {{ selected.run }}</div>
     </div>
-    <span class="tag" style="font-size:12px;padding:6px 10px">BCI</span>
+    <div class="date-pill">Cierre {{ status.latest_date if status and status.latest_date else '2026-08-21' }}</div>
   </div>
 </div>
 
@@ -39,16 +60,13 @@
   <div class="metric"><small>Última cuota guardada</small><strong>{{ status.latest_date if status else '—' }}</strong></div>
 </div>
 
-<div class="card" style="margin-bottom:14px">
-  <h3 style="margin-top:0">Tracking Error histórico vs P75</h3>
-  <canvas id="teChart"></canvas>
+<div class="card chart-card" style="margin-bottom:14px">
+  <div class="section-title"><h3>Tracking Error histórico vs P75</h3><span>Riesgo relativo anualizado</span></div>
+  <div class="chart-wrap"><canvas id="teChart"></canvas></div>
 </div>
 
 <div class="card desktop-table">
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-    <h3 style="margin:0">Peer group · {{ selected.categoria }}</h3>
-    <span style="font-size:12px;color:var(--muted)">Comparación 1 año</span>
-  </div>
+  <div class="section-title"><h3>Peer group · {{ selected.categoria }}</h3><span>Comparación 1 año</span></div>
   <div class="table-wrap"><table class="risk"><thead><tr><th>Fondo</th><th>MER / TE</th><th>Alpha 1A</th><th>IR 12M</th><th>Percentil</th></tr></thead><tbody>
     {% for r in selected.peer_rows %}<tr><td>{{ r.fondo }} {% if r.es_bci %}<span class="tag">BCI</span>{% endif %}</td><td class="te">{{ r.mer }}</td><td>{{ r.alpha }}</td><td>{{ r.ir }}</td><td>{{ r.percentil }}</td></tr>{% endfor %}
   </tbody></table></div>
@@ -60,6 +78,32 @@
 
 <script>
 const labels={{ selected.chart.labels|tojson }}; const bci={{ selected.chart.bci|tojson }}; const p75={{ selected.chart.p75|tojson }};
-new Chart(document.getElementById('teChart'),{type:'line',data:{labels,datasets:[{label:'{{ selected.fondo|e }}',data:bci,borderColor:'#064A91',backgroundColor:'#064A91',borderWidth:3,pointRadius:0,tension:.18},{label:'P75 peer group',data:p75,borderColor:'#FFC400',backgroundColor:'#FFC400',borderDash:[7,5],borderWidth:3,pointRadius:0,tension:.18}]},options:{responsive:true,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top'},tooltip:{callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2)}%`}}},scales:{y:{ticks:{callback:v=>v+'%'},title:{display:true,text:'Tracking Error anualizado'}}}}});
+const ctx=document.getElementById('teChart').getContext('2d');
+const area=ctx.createLinearGradient(0,0,0,310); area.addColorStop(0,'rgba(77,188,255,.22)'); area.addColorStop(1,'rgba(77,188,255,0)');
+new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'{{ selected.fondo|e }}',data:bci,borderColor:'#53c1ff',backgroundColor:area,fill:true,borderWidth:2.5,pointRadius:0,pointHoverRadius:4,tension:.22},{label:'P75 peer group',data:p75,borderColor:'#ffd166',backgroundColor:'transparent',borderDash:[7,5],borderWidth:2,pointRadius:0,tension:.22}]},options:{maintainAspectRatio:false,responsive:true,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top',labels:{color:'#a9c0d0',boxWidth:14,boxHeight:2,usePointStyle:true}},tooltip:{backgroundColor:'#08131f',borderColor:'rgba(120,191,235,.2)',borderWidth:1,titleColor:'#fff',bodyColor:'#c2d8e7',callbacks:{label:(c)=>`${c.dataset.label}: ${c.parsed.y?.toFixed(2)}%`}}},scales:{x:{grid:{display:false},ticks:{color:'#6f899b',maxTicksLimit:7}},y:{grid:{color:'rgba(126,166,193,.08)'},ticks:{color:'#7892a4',callback:v=>v+'%'},title:{display:true,text:'Tracking Error anualizado',color:'#7892a4'}}}}});
+</script>
+
+<script type="module">
+(async()=>{
+  const canvas=document.getElementById('risk3d'); const host=canvas?.closest('.finance-hero'); if(!canvas||!host)return;
+  try{
+    const THREE=await import('https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js');
+    const scene=new THREE.Scene();
+    const camera=new THREE.PerspectiveCamera(42,1,.1,100); camera.position.set(0,1.15,5.8);
+    const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true,powerPreference:'low-power'}); renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.6));
+    const group=new THREE.Group(); scene.add(group);
+    const geo=new THREE.PlaneGeometry(8.2,4.6,48,28); const pos=geo.attributes.position;
+    for(let i=0;i<pos.count;i++){const x=pos.getX(i),y=pos.getY(i);const z=.20*Math.sin(x*1.18)+.11*Math.cos(y*2.05)+.055*Math.sin((x+y)*3.05);pos.setZ(i,z)} pos.needsUpdate=true;
+    const wire=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:0x45baff,wireframe:true,transparent:true,opacity:.18})); wire.rotation.x=-1.03;wire.rotation.z=-.08;wire.position.set(1.25,-1.12,-.6);group.add(wire);
+    const lineGeo=new THREE.BufferGeometry(); const linePts=[]; for(let i=0;i<90;i++){const x=-3.6+i*.082;const y=.42*Math.sin(i*.11)+.15*Math.sin(i*.29);linePts.push(new THREE.Vector3(x,y,0))} lineGeo.setFromPoints(linePts); const line=new THREE.Line(lineGeo,new THREE.LineBasicMaterial({color:0x91ddff,transparent:true,opacity:.75})); line.position.set(.75,.3,.15); group.add(line);
+    const dotGeo=new THREE.BufferGeometry(); const n=190,arr=new Float32Array(n*3); for(let i=0;i<n;i++){arr[i*3]=(Math.random()-.35)*7.8;arr[i*3+1]=(Math.random()-.5)*4;arr[i*3+2]=(Math.random()-.5)*2.7} dotGeo.setAttribute('position',new THREE.BufferAttribute(arr,3)); const dots=new THREE.Points(dotGeo,new THREE.PointsMaterial({color:0x84d8ff,size:.025,transparent:true,opacity:.72})); group.add(dots);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(.78,.018,12,100),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.17}));ring.position.set(2.3,.35,.1);ring.rotation.x=1.04;ring.rotation.y=.25;group.add(ring);
+    const pointer={x:0,y:0}; host.addEventListener('pointermove',e=>{const r=host.getBoundingClientRect();pointer.x=((e.clientX-r.left)/r.width-.5);pointer.y=((e.clientY-r.top)/r.height-.5)},{passive:true});
+    function resize(){const r=host.getBoundingClientRect();renderer.setSize(Math.max(1,r.width),Math.max(1,r.height),false);camera.aspect=r.width/r.height;camera.updateProjectionMatrix()} resize();new ResizeObserver(resize).observe(host);
+    const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;let raf;
+    function tick(t){group.rotation.y+=(pointer.x*.13-group.rotation.y)*.035;group.rotation.x+=(-pointer.y*.045-group.rotation.x)*.04;if(!reduce){wire.position.z=Math.sin(t*.00055)*.055-.6;dots.rotation.y=t*.000035;ring.rotation.z=t*.00021;line.position.y=.3+Math.sin(t*.0007)*.025}renderer.render(scene,camera);raf=requestAnimationFrame(tick)} raf=requestAnimationFrame(tick);
+    document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelAnimationFrame(raf);else raf=requestAnimationFrame(tick)});
+  }catch(err){console.warn('Three.js fallback',err);canvas.style.background='radial-gradient(circle at 75% 30%,rgba(61,183,255,.23),transparent 28%)'}
+})();
 </script>
 {% endblock %}
