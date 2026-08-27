@@ -12,32 +12,64 @@ from quota_update import load_gross_returns, normalize_run
 app = base.app
 
 
-def _calendar_ytd_by_run(cfg: dict, reference_date: pd.Timestamp) -> dict[str, float]:
-    """Compound daily gross returns from Jan 1 through the reference date.
+def _baseline_and_live_ytd(name: str, cfg: dict, reference_date: pd.Timestamp) -> dict[str, float]:
+    """YTD calendario = YTD histórico al último corte embebido + retorno CMF posterior.
 
-    This deliberately does not use the 52-week level/cache window. The 52-week
-    window remains only for TE / IR calculations.
+    El histórico embebido contiene el YTD correcto hasta su fecha de corte
+    (por ejemplo 2026-08-21). La cartola CMF persistida solo contiene el tramo
+    nuevo; por eso no debe interpretarse ese tramo como si fuese todo el YTD.
     """
+    levels = v4.ORIGINAL_CATEGORY_LEVELS(name).copy()
+    if levels.empty:
+        return {}
+
+    bci_col, peer_cols = base.configured_columns(name, levels)
+    if bci_col is None or not peer_cols:
+        return {}
+
+    required = [bci_col, *peer_cols]
+    common = levels[required].dropna(how="any").sort_index()
+    if common.empty:
+        return {}
+
+    baseline_date = min(pd.Timestamp(common.index.max()).normalize(), reference_date)
+    baseline_ytd = v4._ytd_returns(common, baseline_date)
+
+    col_by_run: dict[str, str] = {}
+    for run in [cfg.get("bci"), *cfg.get("peers", [])]:
+        col = base.column_for_run(required, run)
+        if col is not None:
+            col_by_run[normalize_run(run)] = col
+
     gross = load_gross_returns()
     if gross.empty:
-        return {}
+        return {
+            run: float(baseline_ytd[col])
+            for run, col in col_by_run.items()
+            if col in baseline_ytd.index and pd.notna(baseline_ytd[col])
+        }
 
     gross = gross.copy()
     gross["fecha"] = pd.to_datetime(gross["fecha"], errors="coerce").dt.normalize()
     gross["run_norm"] = gross["run"].astype(str).map(normalize_run)
-    start = pd.Timestamp(reference_date.year, 1, 1)
-    gross = gross[(gross["fecha"] >= start) & (gross["fecha"] <= reference_date)]
+    gross = gross[(gross["fecha"] > baseline_date) & (gross["fecha"] <= reference_date)]
 
     result: dict[str, float] = {}
-    for run in [cfg.get("bci"), *cfg.get("peers", [])]:
-        run_norm = normalize_run(run)
+    for run_norm, col in col_by_run.items():
+        base_ytd = float(baseline_ytd.get(col, float("nan")))
+        if pd.isna(base_ytd):
+            continue
+
         sub = gross[gross["run_norm"] == run_norm].dropna(subset=["fecha", "ret_bruta"]).sort_values("fecha")
         if sub.empty:
-            result[run_norm] = float("nan")
+            result[run_norm] = base_ytd
             continue
+
         returns = v4._adjust_prom_returns(sub)
         returns = pd.to_numeric(returns, errors="coerce").dropna()
-        result[run_norm] = float((1.0 + returns).prod() - 1.0) if not returns.empty else float("nan")
+        live_growth = float((1.0 + returns).prod()) if not returns.empty else 1.0
+        result[run_norm] = float((1.0 + base_ytd) * live_growth - 1.0)
+
     return result
 
 
@@ -48,7 +80,7 @@ def compute_live_reference(name: str) -> dict | None:
         return ref
 
     reference_date = pd.Timestamp(ref["Fecha"]).normalize()
-    ytd = _calendar_ytd_by_run(cfg, reference_date)
+    ytd = _baseline_and_live_ytd(name, cfg, reference_date)
     bci_run = normalize_run(cfg.get("bci"))
     peer_runs = [normalize_run(x) for x in cfg.get("peers", [])]
 
@@ -59,7 +91,6 @@ def compute_live_reference(name: str) -> dict | None:
 
     percentile = float((peer_ytd > portfolio_ytd).sum() / len(peer_ytd))
     quartile = max(1, min(4, math.ceil(percentile * 4)))
-    # Mantiene la convención del proyecto: benchmark YTD incluye BCI + peers.
     benchmark_ytd = float(pd.concat([pd.Series([portfolio_ytd]), peer_ytd], ignore_index=True).mean())
 
     ref = dict(ref)
@@ -98,7 +129,6 @@ def live_fund_dashboard(selected_run: str):
     }
 
 
-# flask_app_v2 routes resolve these globals at request time.
 base.compute_live_reference = compute_live_reference
 base.fund_dashboard = live_fund_dashboard
 
