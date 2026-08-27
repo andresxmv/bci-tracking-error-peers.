@@ -106,6 +106,7 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     if reference_date < next_friday:
         corrected["TE EWMA anual"] = baseline.get("TE EWMA anual")
         corrected["Information Ratio"] = baseline.get("Information Ratio")
+        corrected["Information Ratio YTD"] = v4.information_ratio_ytd(name, baseline_date)
         corrected["Alpha anual"] = baseline.get("Alpha anual")
 
     return corrected
@@ -192,6 +193,7 @@ def live_fund_dashboard(selected_run: str):
         "alpha_1y": base.pct(ref.get("Alpha anual"), 2, True),
         "alpha_ytd": base.pct(ref.get("Alpha YTD"), 2, True),
         "ir_12m": base.number(ref.get("Information Ratio"), 2),
+        "ir_ytd": base.number(ref.get("Information Ratio YTD"), 2),
         "percentil_ytd": percentile_label,
         "cuartil_ytd": quartile,
         "peer_rows": base.peer_rows_for(name),

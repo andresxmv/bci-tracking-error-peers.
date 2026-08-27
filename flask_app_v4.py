@@ -139,6 +139,36 @@ def _cumulative_daily_peer(levels: pd.DataFrame, bci_col: str, peer_cols: list[s
     return fund, bench
 
 
+def information_ratio_ytd(name: str, reference_date: pd.Timestamp | None = None) -> float:
+    """IR anualizado usando retornos activos semanales del año calendario."""
+    _, cfg = base.config_by_name(name)
+    if cfg is None or not cfg.get("peers"):
+        return float("nan")
+
+    levels = live_category_levels(name)
+    bci_col, peer_cols = base.configured_columns(name, levels)
+    if levels.empty or bci_col is None or not peer_cols:
+        return float("nan")
+
+    required = [bci_col, *peer_cols]
+    metric_levels = levels[required].dropna(how="any").sort_index()
+    if metric_levels.empty:
+        return float("nan")
+
+    cutoff_value = reference_date if reference_date is not None else metric_levels.index.max()
+    cutoff = pd.Timestamp(cutoff_value).normalize()
+    weekly_levels = metric_levels.loc[:cutoff].resample("W-FRI").last().dropna(how="any")
+    weekly_all = weekly_levels.pct_change(fill_method=None).dropna(how="any")
+    start_of_year = pd.Timestamp(year=cutoff.year, month=1, day=1)
+    weekly_ytd = weekly_all[(weekly_all.index >= start_of_year) & (weekly_all.index <= cutoff)]
+    if len(weekly_ytd) < 2:
+        return float("nan")
+
+    active = weekly_ytd[bci_col] - weekly_ytd[peer_cols].mean(axis=1)
+    te = base.ewma_te(active, annualize=True)
+    return float(active.mean() * 52 / te) if pd.notna(te) and te > 0 else float("nan")
+
+
 def compute_live_reference(name: str) -> dict | None:
     _, cfg = base.config_by_name(name)
     if cfg is None or not cfg.get("peers"):
@@ -165,6 +195,7 @@ def compute_live_reference(name: str) -> dict | None:
     te_display = base.ewma_te(active, annualize=bool(cfg.get("te_anualizado", True)))
     te_ir = base.ewma_te(active, annualize=True)
     ir = float(active.mean() * 52 / te_ir) if pd.notna(te_ir) and te_ir > 0 else float("nan")
+    ir_ytd = information_ratio_ytd(name, reference_date)
 
     ytd = _ytd_returns(levels[required], reference_date)
     portfolio_ytd = float(ytd[bci_col])
@@ -187,6 +218,7 @@ def compute_live_reference(name: str) -> dict | None:
         "Alpha anual": alpha_1y,
         "Alpha YTD": alpha_ytd,
         "Information Ratio": ir,
+        "Information Ratio YTD": ir_ytd,
         "Retorno YTD": portfolio_ytd,
         "Percentil YTD": percentile,
         "Cuartil YTD": quartile,
@@ -243,6 +275,7 @@ def live_fund_dashboard(selected_run: str):
         "alpha_1y": base.pct(ref.get("Alpha anual"), 2, True),
         "alpha_ytd": base.pct(ref.get("Alpha YTD"), 2, True),
         "ir_12m": base.number(ref.get("Information Ratio"), 2),
+        "ir_ytd": base.number(ref.get("Information Ratio YTD"), 2),
         "percentil_ytd": percentile_label,
         "cuartil_ytd": quartile,
         "peer_rows": base.peer_rows_for(name),
