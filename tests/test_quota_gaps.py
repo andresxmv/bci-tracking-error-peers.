@@ -62,7 +62,10 @@ class QuotaGapTests(unittest.TestCase):
                 "moneda": ["$$", "$$", "$$"],
             }).to_csv(gross_path, index=False)
             old_path = quota_update.GROSS_RETURNS_PATH
+            old_seed = quota_update.SEED_RETURNS_PATH
             quota_update.GROSS_RETURNS_PATH = gross_path
+            # Sin semilla: este test mira sólo la deduplicación del runtime.
+            quota_update.SEED_RETURNS_PATH = Path(temp) / "sin_semilla.csv.gz"
             try:
                 result = quota_update.load_gross_returns()
                 self.assertEqual(result[["fecha", "run"]].drop_duplicates().shape[0], 2)
@@ -70,6 +73,7 @@ class QuotaGapTests(unittest.TestCase):
                 self.assertAlmostEqual(float(result.iloc[0].ret_bruta), 0.02)
             finally:
                 quota_update.GROSS_RETURNS_PATH = old_path
+                quota_update.SEED_RETURNS_PATH = old_seed
 
     def test_custom_cutoff_uses_calendar_ytd_baseline(self):
         levels = pd.DataFrame(
@@ -84,7 +88,11 @@ class QuotaGapTests(unittest.TestCase):
             index=pd.to_datetime(["2026-07-31", "2026-08-21"]),
         )
         old_levels = app_v5.v4.live_category_levels
+        old_exact = app_v5.v4.calendar_ytd_metrics
         app_v5.v4.live_category_levels = lambda name, peer_runs=None: levels.copy()
+        # Sin retornos diarios que cubran el año, la corrección cae al método
+        # por factor. Este test fija ese camino de respaldo.
+        app_v5.v4.calendar_ytd_metrics = lambda *a, **k: None
         try:
             cfg = app_v5.base.config_by_name("CP Activa")[1]
             live = {"Fecha": pd.Timestamp("2026-07-31"), "Retorno YTD": 0.0219}
@@ -95,6 +103,7 @@ class QuotaGapTests(unittest.TestCase):
             self.assertAlmostEqual(float(corrected["Retorno YTD"]), expected)
         finally:
             app_v5.v4.live_category_levels = old_levels
+            app_v5.v4.calendar_ytd_metrics = old_exact
 
     def test_cached_cartola_date_is_detected(self):
         with TemporaryDirectory() as temp:
@@ -108,6 +117,141 @@ class QuotaGapTests(unittest.TestCase):
                 self.assertFalse(quota_update.has_quota_date("2026-08-24"))
             finally:
                 quota_update.HISTORY_PATH, quota_update.LATEST_PATH = old_history, old_latest
+
+
+class CalendarYtdTests(unittest.TestCase):
+    """El YTD del dashboard tiene que ser el mismo del reporte oficial.
+
+    El método por factor dividía el YTD validado del 21-08 por la razón de
+    niveles de la serie semanal embebida. Para CD Activa esa serie termina el
+    14-08, así que al factor le faltaba una semana y el 31-07 salía 11,88% en
+    vez de 11,66%. Con retornos diarios el YTD se capitaliza desde el 31-12.
+    """
+
+    # Fondo -> (YTD, alpha YTD) al 31-07-2026 segun Reporte_Cuartiles_oficial.
+    REPORTE = {
+        "CD Activa": (0.1166372, 0.0041),
+        "CP Activa": (0.1100410, 0.0110),
+        "CD Balanceada": (0.0807880, -0.0001),
+        "Europa": (0.1291670, 0.0248),
+        "Asia": (0.2064680, -0.0038),
+        "Estados Unidos": (0.0972080, 0.0115),
+        "Estratégico $ H 1 Año": (0.0356000, 0.0011),
+        "Mediano Plazo": (0.0393700, 0.0029),
+    }
+
+    def test_ytd_al_31_07_igual_al_reporte(self):
+        cutoff = pd.Timestamp("2026-07-31")
+        for fondo, (ytd, _alpha) in self.REPORTE.items():
+            with self.subTest(fondo=fondo):
+                ref = app_v5.compute_reference(fondo, cutoff_date=cutoff)
+                self.assertIsNotNone(ref, f"{fondo}: sin referencia")
+                self.assertAlmostEqual(float(ref["Retorno YTD"]), ytd, places=6)
+                self.assertEqual(ref.get("Origen YTD"), "retornos diarios")
+
+    def test_alpha_al_31_07_igual_al_reporte(self):
+        cutoff = pd.Timestamp("2026-07-31")
+        for fondo, (_ytd, alpha) in self.REPORTE.items():
+            with self.subTest(fondo=fondo):
+                ref = app_v5.compute_reference(fondo, cutoff_date=cutoff)
+                self.assertAlmostEqual(float(ref["Alpha YTD"]), alpha, places=3)
+
+    def test_ytd_al_baseline_no_cambia(self):
+        """El 21-08 ya estaba validado: el camino nuevo no puede moverlo."""
+        for fondo in ("CD Activa", "CP Activa"):
+            with self.subTest(fondo=fondo):
+                esperado = app_v5.BASELINE_REFERENCE[fondo]["Retorno YTD"]
+                ref = app_v5.compute_reference(fondo, cutoff_date=pd.Timestamp("2026-08-21"))
+                self.assertAlmostEqual(float(ref["Retorno YTD"]), float(esperado), places=6)
+
+    def test_percentil_y_cuartil_se_recalculan(self):
+        """Antes quedaban congelados en el baseline para cualquier corte."""
+        ref = app_v5.compute_reference("CD Activa", cutoff_date=pd.Timestamp("2026-07-31"))
+        self.assertIsNotNone(ref["Percentil YTD"])
+        self.assertTrue(0.0 <= float(ref["Percentil YTD"]) <= 1.0)
+        self.assertIn(int(ref["Cuartil YTD"]), (1, 2, 3, 4))
+
+    def test_hueco_largo_invalida_la_ventana(self):
+        """Un salto de semanas nunca se capitaliza como si fuera continuo."""
+        serie = pd.Series(
+            [0.001, 0.002],
+            index=pd.to_datetime(["2026-01-02", "2026-07-31"]),
+        )
+        self.assertIsNone(app_v5.v4._calendar_ytd(serie, pd.Timestamp("2026-07-31")))
+
+
+class SeedReturnsTests(unittest.TestCase):
+    def test_semilla_cubre_el_ano_calendario(self):
+        seed = quota_update.load_seed_returns()
+        self.assertFalse(seed.empty, "falta seed_gross_returns.csv.gz")
+        fechas = pd.to_datetime(seed["fecha"])
+        self.assertLessEqual(fechas.min(), pd.Timestamp("2026-01-02"))
+        self.assertGreaterEqual(fechas.max(), pd.Timestamp("2026-08-21"))
+
+    def test_runtime_le_gana_a_la_semilla(self):
+        """Lo que carga el usuario manda sobre la serie base del repo."""
+        seed = quota_update.load_seed_returns()
+        fila = seed.iloc[0]
+        with TemporaryDirectory() as temp:
+            gross_path = Path(temp) / "gross_returns_history.csv"
+            pd.DataFrame({
+                "fecha": [fila["fecha"]],
+                "run": [fila["run"]],
+                "ret_bruta": [0.123456],
+                "moneda": ["$$"],
+            }).to_csv(gross_path, index=False)
+            old_path = quota_update.GROSS_RETURNS_PATH
+            quota_update.GROSS_RETURNS_PATH = gross_path
+            try:
+                combinado = quota_update.load_gross_returns()
+                fecha = pd.Timestamp(fila["fecha"]).normalize()
+                run = quota_update.normalize_run(fila["run"])
+                match = combinado[(combinado["fecha"] == fecha) & (combinado["run"] == run)]
+                self.assertEqual(len(match), 1)
+                self.assertAlmostEqual(float(match.iloc[0]["ret_bruta"]), 0.123456)
+            finally:
+                quota_update.GROSS_RETURNS_PATH = old_path
+
+
+class QuotaReloadTests(unittest.TestCase):
+    """Una cuota ya cargada no se vuelve a bajar ni a aplicar."""
+
+    @staticmethod
+    def _frame(fechas: list[str]) -> pd.DataFrame:
+        return pd.DataFrame({
+            "fecha": pd.to_datetime(fechas),
+            "run": ["8640"] * len(fechas),
+            "serie": ["A"] * len(fechas),
+            "valor_cuota": [100.0] * len(fechas),
+        })
+
+    def test_no_hay_filas_nuevas_si_ya_esta_todo(self):
+        with TemporaryDirectory() as temp:
+            history = Path(temp) / "quota_history.csv"
+            self._frame(["2026-07-30", "2026-07-31"]).to_csv(history, index=False)
+            old = quota_update.HISTORY_PATH
+            quota_update.HISTORY_PATH = history
+            try:
+                repetida = self._frame(["2026-07-30", "2026-07-31"])
+                self.assertEqual(quota_update.new_quota_rows(repetida), 0)
+                con_una_nueva = self._frame(["2026-07-31", "2026-08-03"])
+                self.assertEqual(quota_update.new_quota_rows(con_una_nueva), 1)
+            finally:
+                quota_update.HISTORY_PATH = old
+
+    def test_la_semilla_tambien_evita_el_captcha(self):
+        with TemporaryDirectory() as temp:
+            vacio = Path(temp) / "quota_history.csv"
+            old_history, old_latest = quota_update.HISTORY_PATH, quota_update.LATEST_PATH
+            quota_update.HISTORY_PATH = vacio
+            quota_update.LATEST_PATH = Path(temp) / "latest_quota.csv"
+            try:
+                self.assertEqual(quota_update.quota_date_source("2026-07-31"), "semilla")
+                self.assertTrue(quota_update.has_quota_date("2026-07-31"))
+                self.assertFalse(quota_update.has_quota_date("2027-01-15"))
+            finally:
+                quota_update.HISTORY_PATH = old_history
+                quota_update.LATEST_PATH = old_latest
 
 
 if __name__ == "__main__":

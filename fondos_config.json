@@ -1,24 +1,445 @@
 {
   "fondos": {
-    "cd_activa": {"nombre":"CD Activa","clase":"Multi-Activos","grupo":"DINAMICA ACTIVA","bci":"8640","orden":10,"peers":["9473","9193","9593","9576","8740","8993","9873","8448","9648"]},
-    "cd_balanceada": {"nombre":"CD Balanceada","clase":"Multi-Activos","grupo":"DINAMICA BALANCEADA","bci":"8639","orden":20,"peers":["9577","9474","9594","8116","9190","9429","9043","9646","9006"]},
-    "cd_conservadora": {"nombre":"CD Conservadora","clase":"Multi-Activos","grupo":"DINAMICA CONSERVADORA","bci":"8638","orden":30,"peers":["9575","9192","9595","9768","8741","8377","9872","9649"]},
-    "cp_activa": {"nombre":"CP Activa","clase":"Multi-Activos","grupo":"PATRIMONIAL ACTIVA","bci":"9060","orden":31,"peers":["8908","8435","8785","8844","10064"]},
-    "cp_balanceada": {"nombre":"CP Balanceada","clase":"Multi-Activos","grupo":"PATRIMONIAL BALANCEADA","bci":"9062","orden":32,"peers":["8992","8911","8336","8845"]},
-    "cp_conservadora": {"nombre":"CP Conservadora","clase":"Multi-Activos","grupo":"PATRIMONIAL CONSERVADORA","bci":"9063","orden":33,"peers":["8994","8910","8306","8295","8773"]},
-    "1_clp": {"nombre":"Estratégico $ H 1 Año","clase":"RFL","grupo":"RF<365NCLP","bci":"8327","orden":40,"peers":["8250","8274","8280","8304","8316","8352","8615","8755","8902","8932","9106","10208","10026"]},
-    "uf_1": {"nombre":"Estratégico UF H 1 Año","clase":"RFL","grupo":"RF<365NUF","bci":"8941","orden":50,"peers":["8127","8986","8991","9222","9291","10261","10461","10515"]},
-    "uf_3": {"nombre":"Estratégico UF H 3 Años","clase":"RFL","grupo":"RF>365NUF<3","bci":"8064","orden":60,"peers":["8077","8106","8118","8141","8152","8263","8317","8853","8897","9084","9597"]},
-    "5h": {"nombre":"Estratégico UF H 5 Años","clase":"RFL","grupo":"RF>365NUF>3<5","bci":"8108","orden":70,"peers":["8089","8125","8203","8287","8346","8375","8421","8676","9074","9154","9238"]},
-    "5m": {"nombre":"Estratégico UF > 5 Años","clase":"RFL","grupo":"RF>365NUF>5","bci":"8460","orden":80,"peers":["8023","8387","8956","9033","9054","9934"]},
-    "asia": {"nombre":"Asia","clase":"RVI","grupo":"RV ASIA EMERGENTE","bci":"8514-6","orden":90,"peers":["8457","8159","8820","8438","9023","8517"]},
-    "europa": {"nombre":"Europa","clase":"RVI","grupo":"RV EUROPA","bci":"8513","orden":100,"peers":["8484","9027","8114","8129","8097","8456","9187","9254"]},
-    "emergente_global": {"nombre":"Emergente Global","clase":"RVI","grupo":"RV GLOBAL EMERGENTE","bci":"8625","orden":110,"peers":["8058","8323","8916","8054","8299","9024","9922","8475","9987"]},
-    "estados_unidos": {"nombre":"Estados Unidos","clase":"RVI","grupo":"RV ESTADOS UNIDOS","bci":"8712","orden":120,"peers":["9932","8488","8480","8987","8479","8915","8300","8078","8113","8458","8205","8437","8183"]},
-    "global_titan": {"nombre":"Global Titan","clase":"RVI","grupo":"RV GLOBAL","bci":"8710","orden":130,"peers":["8822","8090","8301","8088","8707","8294","8971","8427","9005","8924","8621","8744","9931","9651"]},
-    "acciones_chilenas": {"nombre":"Acciones Chilenas","clase":"RVI","grupo":"RV NACIONAL","bci":"8430","orden":140,"peers":["8305","8536","8685","8289","8076","8142","8912","9489","9019","8381","9537","10068"]},
-    "top_picks": {"nombre":"Top Picks","clase":"RVI","grupo":"RV NAC TOP PICKS","bci":"8787","orden":150,"peers":["8723","8918","8380","8898","8872","9414","8982","9362","8372","8819","8305","8038","8536","8685","8289","8076","8142","8912","9489","9019","8381","8490","9537","9685","10068","8043"]},
-    "acciones_globales": {"nombre":"Acciones Globales","clase":"RVI","grupo":"RV GLOBAL","bci":"9372","orden":160,"benchmark":{"indice":"ACWI US Equity","moneda":"CLP"}},
-    "america_latina": {"nombre":"América Latina","clase":"RVI","grupo":"RV LATAM","bci":"8434","orden":170,"te_anualizado":false,"benchmark":{"indice":"MXLA104N Index","moneda":"CLP"}}
+    "1_clp": {
+      "nombre": "Estratégico $ H 1 Año",
+      "clase": "RFL",
+      "grupo": "RF<365NCLP",
+      "bci": "8327",
+      "orden": 10,
+      "peers": [
+        "8250",
+        "8274",
+        "8280",
+        "8304",
+        "8316",
+        "8352",
+        "8615",
+        "8755",
+        "8902",
+        "8932",
+        "9106",
+        "10026",
+        "10208"
+      ]
+    },
+    "uf_1": {
+      "nombre": "Estratégico UF H 1 Año",
+      "clase": "RFL",
+      "grupo": "RF<365NUF",
+      "bci": "8941",
+      "orden": 20,
+      "peers": [
+        "8127",
+        "8986",
+        "8991",
+        "9222",
+        "9291",
+        "10261",
+        "10461",
+        "10515"
+      ]
+    },
+    "mediano_plazo": {
+      "nombre": "Mediano Plazo",
+      "clase": "RFL",
+      "grupo": "RF<365 OF",
+      "bci": "8976",
+      "orden": 30,
+      "peers": [
+        "8363",
+        "8881",
+        "9056",
+        "9222",
+        "9539",
+        "10519"
+      ]
+    },
+    "clp_mayor_1": {
+      "nombre": "Estratégico $ > 1 Año",
+      "clase": "RFL",
+      "grupo": "RF>365NCLP",
+      "bci": "8174",
+      "orden": 40,
+      "peers": [
+        "8029",
+        "8055",
+        "8082",
+        "8292",
+        "8358",
+        "8411",
+        "8422",
+        "8807"
+      ]
+    },
+    "uf_3": {
+      "nombre": "Estratégico UF H 3 Años",
+      "clase": "RFL",
+      "grupo": "RF>365NUF<3",
+      "bci": "8064",
+      "orden": 50,
+      "peers": [
+        "8077",
+        "8106",
+        "8118",
+        "8141",
+        "8152",
+        "8263",
+        "8317",
+        "8853",
+        "8897",
+        "9084",
+        "9597"
+      ]
+    },
+    "5h": {
+      "nombre": "Estratégico UF H 5 Años",
+      "clase": "RFL",
+      "grupo": "RF>365NUF>3<5",
+      "bci": "8108",
+      "orden": 60,
+      "peers": [
+        "8089",
+        "8125",
+        "8203",
+        "8287",
+        "8346",
+        "8375",
+        "8421",
+        "8676",
+        "9074",
+        "9154",
+        "9238"
+      ]
+    },
+    "5m": {
+      "nombre": "Estratégico UF > 5 Años",
+      "clase": "RFL",
+      "grupo": "RF>365NUF>5",
+      "bci": "8460",
+      "orden": 70,
+      "peers": [
+        "8023",
+        "8387",
+        "8956",
+        "9033",
+        "9054",
+        "9934"
+      ]
+    },
+    "cd_ahorro": {
+      "nombre": "Dinámica Ahorro",
+      "clase": "RFL",
+      "grupo": "RF>365OF (Dinamica Ahorro)",
+      "bci": "9228",
+      "orden": 80,
+      "peers": [
+        "8240",
+        "8251",
+        "8959",
+        "9021",
+        "9034",
+        "9108",
+        "9692",
+        "9693",
+        "10482",
+        "10520"
+      ]
+    },
+    "cp_ahorro": {
+      "nombre": "Patrimonial Ahorro",
+      "clase": "RFL",
+      "grupo": "RF>365OF (Patrimonial Ahorro)",
+      "bci": "9061",
+      "orden": 90,
+      "peers": [
+        "8240",
+        "8251",
+        "8959",
+        "9021",
+        "9034",
+        "9108",
+        "9692",
+        "9693",
+        "10482",
+        "10520"
+      ]
+    },
+    "deuda_corp": {
+      "nombre": "Deuda Corp. Estr.",
+      "clase": "RFL",
+      "grupo": "DEUDA CORP LOCAL",
+      "bci": "9226",
+      "orden": 100,
+      "peers": [
+        "8251",
+        "8287",
+        "8315",
+        "8806",
+        "8950",
+        "9021",
+        "9201",
+        "9248"
+      ]
+    },
+    "cd_activa": {
+      "nombre": "CD Activa",
+      "clase": "Multi-Activos",
+      "grupo": "DINAMICA ACTIVA",
+      "bci": "8640",
+      "orden": 110,
+      "peers": [
+        "8448",
+        "8740",
+        "8993",
+        "9193",
+        "9473",
+        "9576",
+        "9593",
+        "9648",
+        "9873"
+      ]
+    },
+    "cp_activa": {
+      "nombre": "CP Activa",
+      "clase": "Multi-Activos",
+      "grupo": "PATRIMONIAL ACTIVA",
+      "bci": "9060",
+      "orden": 120,
+      "peers": [
+        "8435",
+        "8785",
+        "8844",
+        "8908",
+        "10064"
+      ]
+    },
+    "cd_balanceada": {
+      "nombre": "CD Balanceada",
+      "clase": "Multi-Activos",
+      "grupo": "DINAMICA BALANCEADA",
+      "bci": "8639",
+      "orden": 130,
+      "peers": [
+        "8116",
+        "9006",
+        "9043",
+        "9190",
+        "9429",
+        "9474",
+        "9577",
+        "9594",
+        "9646"
+      ]
+    },
+    "cp_balanceada": {
+      "nombre": "CP Balanceada",
+      "clase": "Multi-Activos",
+      "grupo": "PATRIMONIAL BALANCEADA",
+      "bci": "9062",
+      "orden": 140,
+      "peers": [
+        "8336",
+        "8845",
+        "8911",
+        "8992"
+      ]
+    },
+    "cd_conservadora": {
+      "nombre": "CD Conservadora",
+      "clase": "Multi-Activos",
+      "grupo": "DINAMICA CONSERVADORA",
+      "bci": "8638",
+      "orden": 150,
+      "peers": [
+        "8377",
+        "8741",
+        "9192",
+        "9575",
+        "9595",
+        "9649",
+        "9768",
+        "9872"
+      ]
+    },
+    "cp_conservadora": {
+      "nombre": "CP Conservadora",
+      "clase": "Multi-Activos",
+      "grupo": "PATRIMONIAL CONSERVADORA",
+      "bci": "9063",
+      "orden": 160,
+      "peers": [
+        "8295",
+        "8306",
+        "8773",
+        "8910",
+        "8994"
+      ]
+    },
+    "asia": {
+      "nombre": "Asia",
+      "clase": "RVI",
+      "grupo": "RV ASIA EMERGENTE",
+      "bci": "8514-6",
+      "orden": 170,
+      "peers": [
+        "8438",
+        "8457",
+        "8517",
+        "8820",
+        "9023"
+      ]
+    },
+    "emergente_global": {
+      "nombre": "Emergente Global",
+      "clase": "RVI",
+      "grupo": "RV GLOBAL EMERGENTE",
+      "bci": "8625",
+      "orden": 180,
+      "peers": [
+        "8054",
+        "8058",
+        "8299",
+        "8323",
+        "8475",
+        "8916",
+        "9024",
+        "9922",
+        "9987"
+      ]
+    },
+    "estados_unidos": {
+      "nombre": "Estados Unidos",
+      "clase": "RVI",
+      "grupo": "RV ESTADOS UNIDOS",
+      "bci": "8712",
+      "orden": 190,
+      "peers": [
+        "8078",
+        "8113",
+        "8183",
+        "8205",
+        "8300",
+        "8437",
+        "8458",
+        "8479",
+        "8480",
+        "8915",
+        "8987",
+        "9932"
+      ]
+    },
+    "europa": {
+      "nombre": "Europa",
+      "clase": "RVI",
+      "grupo": "RV EUROPA",
+      "bci": "8513",
+      "orden": 200,
+      "peers": [
+        "8097",
+        "8114",
+        "8129",
+        "8456",
+        "8484",
+        "9027",
+        "9187",
+        "9254"
+      ]
+    },
+    "global_titan": {
+      "nombre": "Global Titan",
+      "clase": "RVI",
+      "grupo": "RV GLOBAL",
+      "bci": "8710",
+      "orden": 210,
+      "peers": [
+        "8088",
+        "8090",
+        "8294",
+        "8301",
+        "8427",
+        "8621",
+        "8707",
+        "8744",
+        "8822",
+        "8924",
+        "8971",
+        "9005",
+        "9931"
+      ]
+    },
+    "acciones_globales": {
+      "nombre": "Acciones Globales",
+      "clase": "RVI",
+      "grupo": "RV GLOBAL",
+      "bci": "9372",
+      "orden": 220,
+      "benchmark": {
+        "indice": "ACWI US Equity",
+        "moneda": "CLP"
+      }
+    },
+    "top_picks": {
+      "nombre": "Top Picks",
+      "clase": "RVI",
+      "grupo": "RV NAC TOP PICKS",
+      "bci": "8787",
+      "orden": 230,
+      "peers": [
+        "8038",
+        "8076",
+        "8142",
+        "8289",
+        "8305",
+        "8372",
+        "8380",
+        "8381",
+        "8536",
+        "8685",
+        "8723",
+        "8819",
+        "8872",
+        "8898",
+        "8912",
+        "8918",
+        "8982",
+        "9019",
+        "9362",
+        "9414",
+        "9489",
+        "10331"
+      ]
+    },
+    "acciones_chilenas": {
+      "nombre": "Acciones Chilenas",
+      "clase": "RVI",
+      "grupo": "RV NACIONAL",
+      "bci": "8430",
+      "orden": 240,
+      "peers": [
+        "8076",
+        "8142",
+        "8289",
+        "8305",
+        "8381",
+        "8536",
+        "8685",
+        "8912",
+        "9019",
+        "9489",
+        "10331"
+      ]
+    },
+    "america_latina": {
+      "nombre": "América Latina",
+      "clase": "RVI",
+      "grupo": "RV LATAM",
+      "bci": "8434",
+      "orden": 250,
+      "benchmark": {
+        "indice": "MXLA104N Index",
+        "moneda": "CLP"
+      },
+      "te_anualizado": false
+    }
   }
 }

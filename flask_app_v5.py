@@ -48,6 +48,38 @@ def _compound(s: pd.Series) -> float:
     return float((1.0 + s).prod() - 1.0) if not s.empty else 0.0
 
 
+def _apply_exact_calendar_ytd(
+    name: str,
+    reference: dict,
+    peer_runs: list[str] | None,
+    cutoff_date: pd.Timestamp,
+) -> tuple[dict, bool]:
+    """Reemplaza los campos YTD por el cálculo diario exacto cuando hay cobertura.
+
+    El método por factor divide el YTD validado del baseline por la razón de
+    niveles de la serie semanal embebida. Esa serie no siempre llega al día del
+    baseline (para CD Activa termina una semana antes), y entonces al factor le
+    falta esa semana y el YTD del corte queda alto. Con retornos diarios el YTD
+    se calcula directo desde el 31-12 y el problema desaparece. Si no hay
+    cobertura diaria, se devuelve la referencia intacta.
+    """
+    exact = v4.calendar_ytd_metrics(name, peer_runs, cutoff_date)
+    if not exact:
+        return reference, False
+    corrected = dict(reference)
+    for field in (
+        "Retorno YTD",
+        "Retorno benchmark YTD",
+        "Alpha YTD",
+        "Percentil YTD",
+        "Cuartil YTD",
+    ):
+        corrected[field] = exact[field]
+    corrected["Fecha"] = exact["Fecha"]
+    corrected["Origen YTD"] = "retornos diarios"
+    return corrected, True
+
+
 def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     """YTD calendario = 31-12 previo -> última cartola disponible.
 
@@ -56,13 +88,27 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     a ese corte. La ventana de 52 semanas nunca se usa para construir el YTD.
     """
     baseline = BASELINE_REFERENCE.get(name)
+    baseline_date = pd.Timestamp(baseline["Fecha"]).normalize() if baseline else None
+    reference_date = live_ref.get("Fecha", baseline_date)
+    reference_date = pd.Timestamp(reference_date).normalize() if reference_date is not None else None
+    if reference_date is None:
+        return live_ref
+    if baseline_date is not None and reference_date < baseline_date:
+        reference_date = baseline_date
+
+    exact, applied = _apply_exact_calendar_ytd(name, live_ref, None, reference_date)
+    if applied:
+        corrected = dict(exact)
+        next_friday = baseline_date + pd.offsets.Week(weekday=4) if baseline_date is not None else None
+        if baseline and next_friday is not None and reference_date < next_friday:
+            corrected["TE EWMA anual"] = baseline.get("TE EWMA anual")
+            corrected["Information Ratio"] = baseline.get("Information Ratio")
+            corrected["Information Ratio YTD"] = v4.information_ratio_ytd(name, baseline_date)
+            corrected["Alpha anual"] = baseline.get("Alpha anual")
+        return corrected
+
     if not baseline:
         return live_ref
-
-    baseline_date = pd.Timestamp(baseline.get("Fecha")).normalize()
-    reference_date = pd.Timestamp(live_ref.get("Fecha", baseline_date)).normalize()
-    if reference_date < baseline_date:
-        reference_date = baseline_date
 
     bci_run = normalize_run(cfg.get("bci"))
     post = _post_baseline_returns(cfg, baseline_date, reference_date)
@@ -139,12 +185,21 @@ def _correct_custom_calendar_ytd(
     relativo entre el corte y el baseline. El escenario a la fecha baseline
     queda exactamente en el YTD validado del panel.
     """
+    if not live_ref:
+        return live_ref
     baseline = BASELINE_REFERENCE.get(name)
-    if not baseline or not live_ref:
+    baseline_date = pd.Timestamp(baseline["Fecha"]).normalize() if baseline else None
+    reference_date = live_ref.get("Fecha", baseline_date)
+    if reference_date is None:
+        return live_ref
+    reference_date = pd.Timestamp(reference_date).normalize()
+
+    exact, applied = _apply_exact_calendar_ytd(name, live_ref, peer_runs, reference_date)
+    if applied:
+        return exact
+    if not baseline:
         return live_ref
 
-    baseline_date = pd.Timestamp(baseline.get("Fecha")).normalize()
-    reference_date = pd.Timestamp(live_ref.get("Fecha", baseline_date)).normalize()
     levels = v4.live_category_levels(name, peer_runs)
     bci_col, peer_cols = v4._columns_for_peers(name, levels, peer_runs)
     if levels.empty or bci_col is None or not peer_cols:

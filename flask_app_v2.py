@@ -15,7 +15,16 @@ from flask import Flask, flash, redirect, render_template, request, session, url
 
 from cmf_automation import CMFAutomationError, CMFQuotaSession
 from metrics_data import METRICS_GZ_B64
-from quota_update import has_quota_date, load_status, normalize_run, parse_quota_file, persist_quota, validate_quota_file
+from quota_update import (
+    has_quota_date,
+    load_status,
+    new_quota_rows,
+    normalize_run,
+    parse_quota_file,
+    persist_quota,
+    quota_date_source,
+    validate_quota_file,
+)
 from series_data_1 import SERIES_GZ_B64_1
 from series_data_2 import SERIES_GZ_B64_2
 from series_data_3 import SERIES_GZ_B64_3
@@ -328,10 +337,24 @@ def update_quota():
         if pd.isna(target):
             flash("Selecciona una fecha válida.", "error")
         elif has_quota_date(target):
+            # Nunca se abre un captcha por una fecha que el sistema ya tiene.
+            # Además se cierra cualquier sesión CMF que hubiera quedado abierta,
+            # para que no exista un token con el que reenviar esa misma fecha.
+            stale = session.pop("cmf_token", None)
+            if stale and stale in CMF_SESSIONS:
+                try:
+                    CMF_SESSIONS.pop(stale).close()
+                except Exception:
+                    pass
             cached_date = target.strftime("%Y-%m-%d")
             prepared_date = cached_date
             session["prepared_date"] = cached_date
-            flash(f"La cartola del {cached_date} ya está cargada; no se volvió a descargar.", "success")
+            origen = quota_date_source(target)
+            detalle = "ya está en el histórico" if origen == "cartola" else "ya viene en la serie base del sistema"
+            flash(
+                f"La cuota del {cached_date} {detalle}; no se descargó de nuevo.",
+                "success",
+            )
         else:
             token = secrets.token_urlsafe(18)
             cmf = CMFQuotaSession()
@@ -358,11 +381,28 @@ def update_quota():
                 payload, filename = cmf.submit_captcha(request.form.get("captcha", ""))
                 frame = parse_quota_file(payload, filename)
                 validation = validate_quota_file(frame, EXPECTED_RUNS)
+                nuevas = new_quota_rows(frame)
                 if not validation["ok"]:
                     flash(f"CMF respondió, pero la cobertura fue {validation['coverage']:.1%}. No se guardó.", "error")
+                elif nuevas == 0:
+                    # Segunda barrera: aunque el captcha se haya resuelto, si la
+                    # cartola no trae ninguna fila que no esté ya guardada, no se
+                    # escribe nada ni se recalculan métricas. Volver a aplicar un
+                    # cierre ya cargado es justo lo que descuadra el YTD.
+                    flash(
+                        f"La cartola del {validation['latest_date']} ya estaba cargada completa. "
+                        "No se guardó nada y las métricas quedaron intactas.",
+                        "success",
+                    )
+                    session.pop("cmf_token", None)
+                    session.pop("prepared_date", None)
                 else:
                     saved = persist_quota(frame, filename, validation)
-                    flash(f"Actualización guardada: {saved['latest_date']} · {saved['matched_runs']}/{saved['expected_runs']} RUN.", "success")
+                    flash(
+                        f"Actualización guardada: {saved['latest_date']} · "
+                        f"{saved['matched_runs']}/{saved['expected_runs']} RUN · {nuevas} filas nuevas.",
+                        "success",
+                    )
                     session.pop("cmf_token", None)
                     session.pop("prepared_date", None)
             except CMFAutomationError as exc:

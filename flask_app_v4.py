@@ -8,7 +8,25 @@ import pandas as pd
 import requests
 
 import flask_app_v2 as base
-from quota_update import load_gross_returns, normalize_run
+from quota_update import (
+    GROSS_RETURNS_PATH,
+    MAX_RETURN_GAP_DAYS,
+    SEED_RETURNS_PATH,
+    load_gross_returns,
+    normalize_run,
+)
+
+
+def _returns_signature() -> tuple:
+    """Firma de los archivos de retornos, para invalidar cachés al cargar una cartola."""
+    parts = []
+    for path in (SEED_RETURNS_PATH, GROSS_RETURNS_PATH):
+        try:
+            stat = path.stat()
+            parts.append((path.name, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            parts.append((path.name, 0, 0))
+    return tuple(parts)
 
 app = base.app
 ORIGINAL_CATEGORY_LEVELS = base.category_levels
@@ -175,14 +193,23 @@ def _merge_return_segments(
     if returns.index.has_duplicates:
         returns = returns.groupby(level=0, sort=True).last()
     segment = returns.index.to_series().diff().dt.days.gt(7).cumsum().to_numpy()
+    # Se trabaja sobre un diccionario y se escribe la columna una sola vez al
+    # final. Insertar fila por fila con .loc reconstruye el DataFrame en cada
+    # iteración; con retornos diarios de todo el año eso dejaba el arranque de
+    # la aplicación en decenas de segundos. La lógica es la misma.
+    values: dict[pd.Timestamp, float] = {
+        pd.Timestamp(index).normalize(): value
+        for index, value in levels[column].items()
+    }
+    touched = False
     for _, block in returns.groupby(segment):
         first_date = pd.Timestamp(block.index.min()).normalize()
-        existing = levels[column].dropna().sort_index()
-        anchors = existing[existing.index < first_date]
-        if anchors.empty:
+        existing = sorted(date for date, value in values.items() if pd.notna(value))
+        anchors = [date for date in existing if date < first_date]
+        if not anchors:
             continue
-        anchor_date = pd.Timestamp(anchors.index[-1]).normalize()
-        current = float(anchors.iloc[-1])
+        anchor_date = anchors[-1]
+        current = float(values[anchor_date])
 
         if (first_date - anchor_date).days > 7:
             baseline = pd.Timestamp(baseline_date).normalize() if baseline_date is not None else None
@@ -191,7 +218,8 @@ def _merge_return_segments(
             # La referencia validada llega al baseline aunque la serie gráfica
             # cierre el viernes anterior. El nivel absoluto es irrelevante para
             # los retornos posteriores; este punto evita reutilizar el salto.
-            levels.loc[baseline, column] = current
+            values[baseline] = current
+            touched = True
 
         for dt, ret in block.items():
             dt = pd.Timestamp(dt).normalize()
@@ -199,15 +227,44 @@ def _merge_return_segments(
             # validada (o que fue cargado previamente). Reiniciar `current`
             # aquí también evita arrastrar un retorno compuesto sobre el mismo
             # 31-07 hacia los días posteriores del bloque.
-            if dt in levels.index and pd.notna(levels.at[dt, column]):
-                current = float(levels.at[dt, column])
+            previous = values.get(dt)
+            if previous is not None and pd.notna(previous):
+                current = float(previous)
                 continue
             current *= 1.0 + float(ret)
-            levels.loc[dt, column] = current
+            values[dt] = current
+            touched = True
+
+    if not touched:
+        return levels
+    updated = pd.Series(values).sort_index()
+    updated.index = pd.DatetimeIndex(updated.index)
+    levels = levels.reindex(levels.index.union(updated.index))
+    levels[column] = updated.reindex(levels.index)
     return levels
 
 
 def live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.DataFrame:
+    """Niveles de la categoría con los retornos diarios ya incorporados.
+
+    Cada request del dashboard la pide varias veces (métricas, IR YTD, gráfico
+    y tabla de peers). Reconstruirla cada vez, ahora que hay retornos diarios
+    de todo el año, dejaba la página en varios segundos por consulta y el
+    arranque en cerca de un minuto. Se cachea por nombre, peers y firma de los
+    archivos de retornos, y se devuelve una copia para que nadie mute el caché.
+    """
+    signature = _returns_signature()
+    key = (name, tuple(extra_runs) if extra_runs else None)
+    return _cached_category_levels(key, signature).copy()
+
+
+@lru_cache(maxsize=128)
+def _cached_category_levels(key: tuple, signature: tuple) -> pd.DataFrame:
+    name, extra = key
+    return _build_live_category_levels(name, list(extra) if extra else None)
+
+
+def _build_live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.DataFrame:
     levels = ORIGINAL_CATEGORY_LEVELS(name).copy()
     _, cfg = base.config_by_name(name)
     if cfg is None:
@@ -229,15 +286,16 @@ def live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.D
         if source is not None:
             levels = levels.join(universe[source].rename(source), how="outer")
 
-    gross = load_gross_returns()
-    if gross.empty:
+    by_run = _gross_by_run(_returns_signature())
+    if not by_run:
         return levels.sort_index()
     for run in runs:
         col = base.column_for_run(levels.columns, run)
         run_norm = normalize_run(run)
-        sub = gross[gross["run"].astype(str).map(normalize_run) == run_norm].copy()
-        if sub.empty:
+        sub = by_run.get(run_norm)
+        if sub is None or sub.empty:
             continue
+        sub = sub.copy()
         sub["fecha"] = pd.to_datetime(sub["fecha"], errors="coerce").dt.normalize()
         sub = sub.dropna(subset=["fecha", "ret_bruta"]).sort_values("fecha")
         # Defensa adicional para archivos generados por versiones anteriores:
@@ -330,6 +388,134 @@ def information_ratio_ytd(
     active = weekly_ytd[bci_col] - weekly_ytd[peer_cols].mean(axis=1)
     te = base.ewma_te(active, annualize=True)
     return float(active.mean() * 52 / te) if pd.notna(te) and te > 0 else float("nan")
+
+
+@lru_cache(maxsize=1)
+def _gross_by_run(signature: tuple) -> dict[str, pd.DataFrame]:
+    """Retornos brutos agrupados por RUN, una sola vez por versión del archivo.
+
+    load_gross_returns() ya devuelve el RUN normalizado; volver a mapear
+    normalize_run sobre las 55 mil filas por cada RUN y cada fondo costaba
+    decenas de millones de llamadas en cada arranque.
+    """
+    gross = load_gross_returns()
+    if gross.empty:
+        return {}
+    gross = gross.dropna(subset=["fecha", "ret_bruta"])
+    gross = gross.sort_values(["run", "fecha"]).drop_duplicates(["fecha", "run"], keep="last")
+    return {str(run): frame for run, frame in gross.groupby("run", sort=False)}
+
+
+@lru_cache(maxsize=1)
+def _daily_returns_index(signature: tuple) -> dict[str, pd.Series]:
+    """Retorno bruto diario por RUN, en pesos, indexado una sola vez."""
+    out: dict[str, pd.Series] = {}
+    for run, sub in _gross_by_run(signature).items():
+        try:
+            serie = _adjust_prom_returns(sub)
+        except Exception:
+            serie = sub.set_index("fecha")["ret_bruta"].astype(float).sort_index()
+        serie = pd.to_numeric(serie, errors="coerce").dropna()
+        if not serie.empty:
+            out[str(run)] = serie
+    return out
+
+
+def daily_returns_by_run(runs: list[str]) -> dict[str, pd.Series]:
+    """Retorno bruto diario por RUN, ya convertido a pesos si el fondo informa en dólares."""
+    index = _daily_returns_index(_returns_signature())
+    out: dict[str, pd.Series] = {}
+    for run in runs:
+        run_norm = normalize_run(run)
+        if not run_norm or run_norm in EXCLUDED_RUNS:
+            continue
+        serie = index.get(run_norm)
+        if serie is not None and not serie.empty:
+            out[run_norm] = serie
+    return out
+
+
+def _calendar_ytd(serie: pd.Series, cutoff: pd.Timestamp) -> float | None:
+    """Retorno YTD calendario capitalizando los retornos diarios del año.
+
+    Devuelve None si la serie no cubre el año completo hasta el corte. Un hueco
+    mayor a MAX_RETURN_GAP_DAYS invalida la ventana: capitalizar sobre un salto
+    de semanas daría un YTD inventado.
+    """
+    cutoff = pd.Timestamp(cutoff).normalize()
+    start = pd.Timestamp(cutoff.year, 1, 1)
+    window = serie.loc[(serie.index >= start) & (serie.index <= cutoff)]
+    if window.empty:
+        return None
+    if pd.Timestamp(window.index.min()) > start + pd.Timedelta(days=MAX_RETURN_GAP_DAYS):
+        return None
+    if pd.Timestamp(window.index.max()) < cutoff - pd.Timedelta(days=MAX_RETURN_GAP_DAYS):
+        return None
+    if len(window) > 1:
+        gaps = pd.Series(window.index).diff().dt.days.dropna()
+        if not gaps.empty and gaps.max() > MAX_RETURN_GAP_DAYS:
+            return None
+    return float((1.0 + window).prod() - 1.0)
+
+
+def calendar_ytd_metrics(
+    name: str,
+    peer_runs: list[str] | None,
+    cutoff_date: pd.Timestamp,
+) -> dict | None:
+    """YTD calendario exacto del fondo y su P-group, desde retornos diarios.
+
+    Es el mismo cálculo del panel de riesgo de mercado: se capitaliza el retorno
+    bruto diario desde el 31-12 anterior hasta el corte, y el benchmark es el
+    promedio simple de los YTD del grupo completo (BCI + peers). No reemplaza
+    las fórmulas de TE ni de IR, que siguen usando los cierres semanales.
+
+    Devuelve None si falta cobertura diaria; el llamador conserva su cálculo.
+    """
+    _, cfg = base.config_by_name(name)
+    if cfg is None or not cfg.get("bci"):
+        return None
+    requested = cfg.get("peers", []) if peer_runs is None else peer_runs
+    if not requested:
+        return None
+
+    bci_run = normalize_run(cfg["bci"])
+    peers = [normalize_run(run) for run in requested]
+    peers = [run for run in dict.fromkeys(peers) if run and run != bci_run]
+    if not peers:
+        return None
+
+    series = daily_returns_by_run([bci_run, *peers])
+    cutoff = pd.Timestamp(cutoff_date).normalize()
+
+    if bci_run not in series:
+        return None
+    portfolio = _calendar_ytd(series[bci_run], cutoff)
+    if portfolio is None:
+        return None
+
+    peer_ytd: dict[str, float] = {}
+    for run in peers:
+        serie = series.get(run)
+        if serie is None:
+            continue
+        value = _calendar_ytd(serie, cutoff)
+        if value is not None:
+            peer_ytd[run] = value
+    if not peer_ytd:
+        return None
+
+    benchmark = float(np.mean([portfolio, *peer_ytd.values()]))
+    percentile = float(sum(1 for value in peer_ytd.values() if value > portfolio) / len(peer_ytd))
+    return {
+        "Fecha": cutoff,
+        "Retorno YTD": portfolio,
+        "Retorno benchmark YTD": benchmark,
+        "Alpha YTD": portfolio - benchmark,
+        "Percentil YTD": percentile,
+        "Cuartil YTD": max(1, min(4, math.ceil(percentile * 4))),
+        "Peers YTD": len(peer_ytd),
+    }
 
 
 def compute_custom_reference(

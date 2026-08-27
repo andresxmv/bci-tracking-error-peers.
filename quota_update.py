@@ -6,6 +6,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 from io import BytesIO
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +17,12 @@ HISTORY_PATH = DATA_DIR / "quota_history.csv"
 GROSS_RETURNS_PATH = DATA_DIR / "gross_returns_history.csv"
 STATUS_PATH = DATA_DIR / "quota_status.json"
 MAX_RETURN_GAP_DAYS = 7
+
+# Semilla versionada en el repo: retornos brutos diarios ya calculados con
+# gross_fund_returns() sobre las cartolas CMF. Existe para que el dashboard
+# tenga el año calendario completo aunque runtime_data se pierda al recrear el
+# contenedor. Lo que el usuario carga en /actualizar siempre manda sobre ella.
+SEED_RETURNS_PATH = Path(__file__).resolve().parent / "seed_gross_returns.csv.gz"
 
 CARTOLA_NUMERIC = [
     "CUOTAS_APORTADAS",
@@ -307,27 +314,64 @@ def load_status() -> dict | None:
         return None
 
 
-def has_quota_date(value: object) -> bool:
-    """Indica si una cartola de la fecha ya está guardada en el histórico.
+def quota_date_source(value: object) -> str | None:
+    """Dónde está ya disponible esa fecha: "cartola", "semilla" o None.
 
-    La consulta evita iniciar otra sesión CMF/captcha para una fecha que ya
-    fue persistida. Se revisan ambos archivos porque el histórico contiene
-    todas las fechas y latest_quota.csv sólo conserva el último corte.
+    Sirve para no volver a pedir un captcha por un día que el sistema ya tiene.
+    Se revisan el histórico y latest_quota.csv porque el primero guarda todas
+    las fechas y el segundo sólo el último corte; después la semilla del repo.
     """
     target = pd.to_datetime(value, errors="coerce")
     if pd.isna(target):
-        return False
+        return None
     target = pd.Timestamp(target).normalize()
+
     for path in (HISTORY_PATH, LATEST_PATH):
         if not path.exists():
             continue
         try:
             dates = pd.read_csv(path, usecols=["fecha"], parse_dates=["fecha"])["fecha"]
-            if dates.dt.normalize().eq(target).any():
-                return True
         except (OSError, ValueError, KeyError):
             continue
-    return False
+        if dates.dt.normalize().eq(target).any():
+            return "cartola"
+
+    seed = load_seed_returns()
+    if not seed.empty and "fecha" in seed.columns:
+        fechas = pd.to_datetime(seed["fecha"], errors="coerce").dropna()
+        if not fechas.empty and fechas.dt.normalize().eq(target).any():
+            return "semilla"
+    return None
+
+
+def has_quota_date(value: object) -> bool:
+    """True si la fecha ya está cubierta y no hace falta bajarla de nuevo."""
+    return quota_date_source(value) is not None
+
+
+def new_quota_rows(frame: pd.DataFrame) -> int:
+    """Filas de la cartola que todavía no están en el histórico persistido.
+
+    Si da 0, volver a guardar sólo reescribiría lo mismo. Se usa para cortar el
+    flujo antes de tocar los archivos y de recomputar métricas.
+    """
+    if frame is None or frame.empty:
+        return 0
+    incoming = frame.copy()
+    incoming["fecha"] = pd.to_datetime(incoming["fecha"], errors="coerce").dt.normalize()
+    incoming["run"] = incoming["run"].map(normalize_run)
+    incoming = incoming.dropna(subset=["fecha"]).drop_duplicates(["fecha", "run", "serie"])
+    if not HISTORY_PATH.exists():
+        return int(len(incoming))
+    try:
+        prior = pd.read_csv(HISTORY_PATH, usecols=["fecha", "run", "serie"], parse_dates=["fecha"])
+    except (OSError, ValueError, KeyError):
+        return int(len(incoming))
+    prior["fecha"] = pd.to_datetime(prior["fecha"], errors="coerce").dt.normalize()
+    prior["run"] = prior["run"].map(normalize_run)
+    known = set(zip(prior["fecha"], prior["run"], prior["serie"].astype(str)))
+    pairs = zip(incoming["fecha"], incoming["run"], incoming["serie"].astype(str))
+    return int(sum(1 for item in pairs if item not in known))
 
 
 def load_latest_quota() -> pd.DataFrame:
@@ -336,10 +380,69 @@ def load_latest_quota() -> pd.DataFrame:
     return pd.read_csv(LATEST_PATH, parse_dates=["fecha"])
 
 
-def load_gross_returns() -> pd.DataFrame:
-    if not GROSS_RETURNS_PATH.exists():
+def _file_signature(path: Path) -> tuple:
+    try:
+        stat = path.stat()
+        return (str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return (str(path), 0, 0)
+
+
+@lru_cache(maxsize=4)
+def _load_returns_cached(signature: tuple) -> pd.DataFrame:
+    return _read_returns_file(Path(signature[0]))
+
+
+def _read_returns_file(path: Path) -> pd.DataFrame:
+    if not path.exists():
         return pd.DataFrame(columns=["fecha", "run", "ret_bruta", "moneda"])
-    frame = pd.read_csv(GROSS_RETURNS_PATH, parse_dates=["fecha"])
+    try:
+        return pd.read_csv(path, parse_dates=["fecha"])
+    except (OSError, ValueError):
+        return pd.DataFrame(columns=["fecha", "run", "ret_bruta", "moneda"])
+
+
+def load_seed_returns() -> pd.DataFrame:
+    """Retornos brutos diarios de la semilla versionada."""
+    return _load_returns_cached(_file_signature(SEED_RETURNS_PATH))
+
+
+def seed_date_range() -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    seed = load_seed_returns()
+    if seed.empty or "fecha" not in seed.columns:
+        return None
+    fechas = pd.to_datetime(seed["fecha"], errors="coerce").dropna()
+    if fechas.empty:
+        return None
+    return pd.Timestamp(fechas.min()).normalize(), pd.Timestamp(fechas.max()).normalize()
+
+
+@lru_cache(maxsize=2)
+def _combined_gross_returns(seed_sig: tuple, runtime_sig: tuple) -> pd.DataFrame:
+    return _build_gross_returns()
+
+
+def load_gross_returns() -> pd.DataFrame:
+    """Retornos brutos diarios: semilla del repo + lo cargado en runtime.
+
+    El resultado se cachea por firma de archivo (mtime y tamaño) porque cada
+    request del dashboard lo pide varias veces y releer el .csv.gz completo en
+    cada llamada hacía la página inutilizable.
+    """
+    frame = _combined_gross_returns(
+        _file_signature(SEED_RETURNS_PATH), _file_signature(GROSS_RETURNS_PATH)
+    )
+    return frame.copy()
+
+
+def _build_gross_returns() -> pd.DataFrame:
+    runtime = _read_returns_file(GROSS_RETURNS_PATH)
+    seed = load_seed_returns()
+    if runtime.empty and seed.empty:
+        return pd.DataFrame(columns=["fecha", "run", "ret_bruta", "moneda"])
+    # La semilla va primero y el runtime después: al deduplicar con keep="last"
+    # gana siempre la cartola que cargó el usuario.
+    frame = pd.concat([seed, runtime], ignore_index=True) if not seed.empty else runtime
     if "fecha" in frame.columns:
         frame["fecha"] = pd.to_datetime(frame["fecha"], errors="coerce").dt.normalize()
     if "run" in frame.columns:
