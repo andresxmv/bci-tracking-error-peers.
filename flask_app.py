@@ -178,7 +178,8 @@ def fund_dashboard(selected_run: str):
     if not selected_ytd.empty:
         ret_ytd = float(selected_ytd.ret_ytd.iloc[0])
         alpha_ytd = float(selected_ytd.alpha_ytd.iloc[0])
-        pytd = percentile_high_good(ytd.alpha_ytd, alpha_ytd)
+        # Posición YTD se define por RETORNO YTD del fondo contra su peer group.
+        pytd = percentile_high_good(ytd.ret_ytd, ret_ytd)
         qytd = quartile_from_percentile(pytd)
 
     peer_table = peers[["fondo", "run", "es_bci", "exceso_1y", "IR", "te_ewma_anual"]].copy()
