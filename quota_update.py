@@ -15,6 +15,7 @@ LATEST_PATH = DATA_DIR / "latest_quota.csv"
 HISTORY_PATH = DATA_DIR / "quota_history.csv"
 GROSS_RETURNS_PATH = DATA_DIR / "gross_returns_history.csv"
 STATUS_PATH = DATA_DIR / "quota_status.json"
+MAX_RETURN_GAP_DAYS = 7
 
 CARTOLA_NUMERIC = [
     "CUOTAS_APORTADAS",
@@ -211,6 +212,12 @@ def gross_fund_returns(cartola: pd.DataFrame) -> pd.DataFrame:
         ajuste = sub.pivot_table(index="fecha", columns="serie", values="factor_ajuste", aggfunc="last").fillna(1.0).replace(0.0, 1.0)
         prev_equity = equity.shift(1)
         series_returns = (quota * reparto * ajuste) / quota.shift(1) - 1.0 + fees.div(prev_equity)
+        # Una cartola histórica y otra reciente pueden dejar semanas sin datos.
+        # Nunca interpretamos ese salto como retorno de un solo día: al
+        # aplicarlo sobre la serie embebida se duplicaba el tramo intermedio.
+        gaps = quota.index.to_series().diff().dt.days
+        valid_gap = gaps.le(MAX_RETURN_GAP_DAYS)
+        series_returns = series_returns.where(valid_gap, axis=0)
         weights = prev_equity.where(series_returns.notna() & (prev_equity > 0))
         weights = weights.div(weights.sum(axis=1), axis=0)
         returns = (series_returns * weights).sum(axis=1, min_count=1).dropna()
@@ -298,6 +305,29 @@ def load_status() -> dict | None:
         return json.loads(STATUS_PATH.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def has_quota_date(value: object) -> bool:
+    """Indica si una cartola de la fecha ya está guardada en el histórico.
+
+    La consulta evita iniciar otra sesión CMF/captcha para una fecha que ya
+    fue persistida. Se revisan ambos archivos porque el histórico contiene
+    todas las fechas y latest_quota.csv sólo conserva el último corte.
+    """
+    target = pd.to_datetime(value, errors="coerce")
+    if pd.isna(target):
+        return False
+    target = pd.Timestamp(target).normalize()
+    for path in (HISTORY_PATH, LATEST_PATH):
+        if not path.exists():
+            continue
+        try:
+            dates = pd.read_csv(path, usecols=["fecha"], parse_dates=["fecha"])["fecha"]
+            if dates.dt.normalize().eq(target).any():
+                return True
+        except (OSError, ValueError, KeyError):
+            continue
+    return False
 
 
 def load_latest_quota() -> pd.DataFrame:

@@ -14,14 +14,16 @@ app = base.app
 ORIGINAL_CATEGORY_LEVELS = base.category_levels
 PROXY_URL = "https://nusycxhrfynrrbvdiiko.supabase.co/functions/v1/cmf-cartola-proxy"
 PROXY_KEY = "bci-tracking-error-peers-v1"
+EXCLUDED_RUNS = frozenset({"10331"})
+REFERENCE_BASELINE = {key: dict(value) for key, value in base.REFERENCE.items()}
 
 
 @lru_cache(maxsize=1)
 def historical_universe_levels() -> pd.DataFrame:
     """Une todas las series históricas embebidas por RUN.
 
-    El JSON define la selección inicial, pero el usuario puede formar un peer
-    group con cualquier RUN que tenga historia suficiente en el panel.
+    El JSON define el P-group inicial; la unión histórica se conserva para
+    recalcular una vez que el RUN tenga cuotas cargadas.
     """
     by_run: dict[str, pd.Series] = {}
     for payload in base.series.values():
@@ -30,7 +32,7 @@ def historical_universe_levels() -> pd.DataFrame:
             continue
         for column in frame.columns:
             run = normalize_run(str(column).split("-", 1)[0])
-            if not run:
+            if not run or run in EXCLUDED_RUNS:
                 continue
             values = frame[column].dropna().sort_index()
             if values.empty:
@@ -41,13 +43,16 @@ def historical_universe_levels() -> pd.DataFrame:
 
 
 def available_peer_runs(name: str) -> list[str]:
-    """RUN con serie histórica seleccionable, excluyendo el fondo analizado."""
+    """RUN del P-group configurado, aunque todavía no tenga historia local."""
     _, cfg = base.config_by_name(name)
-    universe = historical_universe_levels()
-    if cfg is None or not cfg.get("peers") or universe.empty:
+    if cfg is None or not cfg.get("peers"):
         return []
-    bci_column = base.column_for_run(universe.columns, cfg["bci"])
-    return [normalize_run(run) for run in universe.columns if run != bci_column]
+    bci_run = normalize_run(cfg.get("bci"))
+    configured = [normalize_run(run) for run in cfg.get("peers", [])]
+    return list(dict.fromkeys(
+        run for run in configured
+        if run and run not in EXCLUDED_RUNS and run != bci_run
+    ))
 
 
 @lru_cache(maxsize=1)
@@ -60,7 +65,7 @@ def historical_universe_metadata() -> dict[str, dict[str, str]]:
         for column in frame.columns:
             parts = str(column).split("-", 1)
             run = normalize_run(parts[0])
-            if run and run not in embedded:
+            if run and run not in EXCLUDED_RUNS and run not in embedded:
                 embedded[run] = {
                     "fondo": parts[1].strip().title() if len(parts) > 1 else f"RUN {run}",
                     "categoria": candidate["nombre"],
@@ -74,6 +79,7 @@ def available_peer_options(name: str) -> list[dict]:
     if cfg is None:
         return []
     defaults = {normalize_run(run) for run in cfg.get("peers", [])}
+    history_runs = set(historical_universe_levels().columns.astype(str))
     metadata = base.df.copy()
     metadata["run_norm"] = metadata["run"].astype(str).map(normalize_run)
     embedded_metadata = historical_universe_metadata()
@@ -84,8 +90,9 @@ def available_peer_options(name: str) -> list[dict]:
         rows.append({
             "run": run,
             "fondo": str(match.iloc[0].fondo) if not match.empty else fallback["fondo"],
-            "categoria": str(match.iloc[0].categoria) if not match.empty else fallback["categoria"],
+            "categoria": str(cfg.get("grupo") or (match.iloc[0].categoria if not match.empty else fallback["categoria"])),
             "json_default": run in defaults,
+            "has_history": run in history_runs,
         })
     return sorted(rows, key=lambda row: (not row["json_default"], row["categoria"], row["fondo"], row["run"]))
 
@@ -144,16 +151,56 @@ def _adjust_prom_returns(frame: pd.DataFrame) -> pd.Series:
     return ret
 
 
+def _merge_return_segments(
+    levels: pd.DataFrame,
+    column: str,
+    returns: pd.Series,
+    baseline_date: pd.Timestamp | None,
+) -> pd.DataFrame:
+    """Incorpora bloques contiguos sin aplicar retornos sobre períodos solapados."""
+    returns = pd.to_numeric(returns, errors="coerce").dropna().sort_index()
+    if returns.empty:
+        return levels
+    returns.index = pd.to_datetime(returns.index).normalize()
+    segment = returns.index.to_series().diff().dt.days.gt(7).cumsum().to_numpy()
+    for _, block in returns.groupby(segment):
+        first_date = pd.Timestamp(block.index.min()).normalize()
+        existing = levels[column].dropna().sort_index()
+        anchors = existing[existing.index < first_date]
+        if anchors.empty:
+            continue
+        anchor_date = pd.Timestamp(anchors.index[-1]).normalize()
+        current = float(anchors.iloc[-1])
+
+        if (first_date - anchor_date).days > 7:
+            baseline = pd.Timestamp(baseline_date).normalize() if baseline_date is not None else None
+            if baseline is None or not (anchor_date < baseline < first_date) or (first_date - baseline).days > 7:
+                continue
+            # La referencia validada llega al baseline aunque la serie gráfica
+            # cierre el viernes anterior. El nivel absoluto es irrelevante para
+            # los retornos posteriores; este punto evita reutilizar el salto.
+            levels.loc[baseline, column] = current
+
+        for dt, ret in block.items():
+            current *= 1.0 + float(ret)
+            levels.loc[pd.Timestamp(dt), column] = current
+    return levels
+
+
 def live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.DataFrame:
     levels = ORIGINAL_CATEGORY_LEVELS(name).copy()
-    if levels.empty:
-        return levels
     _, cfg = base.config_by_name(name)
     if cfg is None:
         return levels
 
     runs = [cfg.get("bci"), *cfg.get("peers", []), *(extra_runs or [])]
-    runs = list(dict.fromkeys(normalize_run(run) for run in runs if run))
+    runs = list(dict.fromkeys(
+        normalize_run(run) for run in runs
+        if run and normalize_run(run) not in EXCLUDED_RUNS
+    ))
+    reference = REFERENCE_BASELINE.get(name, {})
+    baseline_value = reference.get("Fecha")
+    baseline_date = pd.Timestamp(baseline_value).normalize() if baseline_value is not None else None
     universe = historical_universe_levels()
     for run in runs:
         if base.column_for_run(levels.columns, run) is not None:
@@ -167,29 +214,23 @@ def live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.D
         return levels.sort_index()
     for run in runs:
         col = base.column_for_run(levels.columns, run)
-        if col is None:
-            continue
         run_norm = normalize_run(run)
         sub = gross[gross["run"].astype(str).map(normalize_run) == run_norm].copy()
         if sub.empty:
             continue
         sub["fecha"] = pd.to_datetime(sub["fecha"], errors="coerce").dt.normalize()
         sub = sub.dropna(subset=["fecha", "ret_bruta"]).sort_values("fecha")
-        existing = levels[col].dropna()
-        if existing.empty:
-            continue
-        last_date = pd.Timestamp(existing.index.max()).normalize()
-        last_level = float(existing.loc[existing.index.max()])
-        sub = sub[sub["fecha"] > last_date]
-        if sub.empty:
-            continue
         returns = _adjust_prom_returns(sub)
-        current = last_level
-        for dt, ret in returns.items():
-            if pd.isna(ret):
-                continue
-            current *= 1.0 + float(ret)
-            levels.loc[pd.Timestamp(dt), col] = current
+        if col is None and not returns.empty:
+            # Para RUN nuevos del Excel sin serie embebida, el primer nivel es
+            # sintético (100). La escala no afecta retornos, TE, alpha ni IR;
+            # permite que una cartola cargada por el usuario entre al P-group.
+            cumulative = (1.0 + returns).cumprod()
+            levels = levels.join(cumulative.rename(run_norm), how="outer")
+            continue
+        if col is None:
+            continue
+        levels = _merge_return_segments(levels, col, returns, baseline_date)
     return levels.sort_index()
 
 

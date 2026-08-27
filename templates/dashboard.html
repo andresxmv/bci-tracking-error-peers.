@@ -46,9 +46,9 @@
       <div>
         <div style="font-size:10px;color:var(--muted);font-weight:800;letter-spacing:.1em">CONFIGURACIÓN DEL PEER GROUP</div>
         <h3>Selecciona los peer RUN</h3>
-        <p>El JSON deja {{ selected.peer_default_count }} RUN marcados por defecto. Puedes buscar y agregar cualquiera de los {{ selected.peer_options|length }} fondos con serie histórica.</p>
+    <p>El Excel deja {{ selected.peer_default_count }} RUN marcados por defecto. Puedes buscar y seleccionar cualquiera de los {{ selected.peer_options|length }} fondos del P-group.</p>
       </div>
-      <span class="config-source{% if selected.analysis_is_custom %} custom{% endif %}">{% if selected.analysis_is_custom %}Escenario aplicado{% else %}JSON base · {{ selected.peer_count }}{% endif %}</span>
+      <span class="config-source{% if selected.analysis_is_custom %} custom{% endif %}">{% if selected.analysis_is_custom %}Escenario aplicado{% else %}Excel base · {{ selected.peer_count }}{% endif %}</span>
     </div>
     <div class="cutoff-row">
       <label class="cutoff-field"><span>Fecha de corte</span><input class="control" type="date" name="fecha_corte" value="{{ selected.cutoff_value }}" min="{{ selected.cutoff_min }}" max="{{ selected.cutoff_max }}"></label>
@@ -67,7 +67,7 @@
         <span class="peer-option-body">
           <span class="peer-run">{{ peer.run }}</span>
           <strong class="peer-name">{{ peer.fondo }}</strong>
-          <span class="peer-hint">{{ peer.categoria }}{% if peer.json_default %} · <span class="peer-default">JSON base</span>{% endif %}</span>
+        <span class="peer-hint">{{ peer.categoria }}{% if peer.json_default %} · <span class="peer-default">P-group base</span>{% endif %}{% if not peer.has_history %} · sin historia cargada{% endif %}</span>
         </span>
       </label>
       {% endfor %}

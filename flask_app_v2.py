@@ -15,7 +15,7 @@ from flask import Flask, flash, redirect, render_template, request, session, url
 
 from cmf_automation import CMFAutomationError, CMFQuotaSession
 from metrics_data import METRICS_GZ_B64
-from quota_update import load_status, normalize_run, parse_quota_file, persist_quota, validate_quota_file
+from quota_update import has_quota_date, load_status, normalize_run, parse_quota_file, persist_quota, validate_quota_file
 from series_data_1 import SERIES_GZ_B64_1
 from series_data_2 import SERIES_GZ_B64_2
 from series_data_3 import SERIES_GZ_B64_3
@@ -78,7 +78,7 @@ def config_by_name(name: str):
 def bci_catalog():
     rows = []
     for stem, cfg in sorted(CONFIG.items(), key=lambda kv: (kv[1].get("orden", 999), kv[1]["nombre"])):
-        rows.append({"run": str(cfg["bci"]), "fondo": cfg["nombre"], "categoria": cfg["nombre"], "stem": stem})
+        rows.append({"run": str(cfg["bci"]), "fondo": cfg["nombre"], "categoria": cfg.get("grupo", cfg["nombre"]), "stem": stem})
     return rows
 
 
@@ -321,11 +321,17 @@ def update_quota():
         return guard
     captcha_b64 = None
     prepared_date = session.get("prepared_date")
+    cached_date = None
 
     if request.method == "POST" and request.form.get("action") == "prepare":
         target = pd.to_datetime(request.form.get("fecha"), errors="coerce")
         if pd.isna(target):
             flash("Selecciona una fecha válida.", "error")
+        elif has_quota_date(target):
+            cached_date = target.strftime("%Y-%m-%d")
+            prepared_date = cached_date
+            session["prepared_date"] = cached_date
+            flash(f"La cartola del {cached_date} ya está cargada; no se volvió a descargar.", "success")
         else:
             token = secrets.token_urlsafe(18)
             cmf = CMFQuotaSession()
@@ -370,7 +376,13 @@ def update_quota():
                     pass
                 CMF_SESSIONS.pop(token, None)
 
-    return render_template("update.html", status=load_status(), captcha_b64=captcha_b64, prepared_date=prepared_date or session.get("prepared_date"))
+    return render_template(
+        "update.html",
+        status=load_status(),
+        captcha_b64=captcha_b64,
+        cached_date=cached_date,
+        prepared_date=prepared_date or session.get("prepared_date"),
+    )
 
 
 @app.get("/health")
