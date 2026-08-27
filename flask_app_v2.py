@@ -86,24 +86,39 @@ def _norm_col(value: object) -> str:
     return str(value).strip().upper().replace(".", "").replace(" ", "")
 
 
-def column_for_run(columns, run: object):
-    """Encuentra un RUN dentro de nombres tipo '8514-6 - FONDO'.
+def _run_aliases(run: object) -> list[str]:
+    """RUN oficial y alias histórico sin dígito verificador cuando aplica.
 
-    No corta por guion, porque el dígito verificador puede formar parte del RUN.
+    Caso concreto: fondos_config usa 8514-6, pero la serie embebida está
+    rotulada 8514-ASIA. El RUN oficial sigue siendo 8514-6; el alias solo se
+    usa para localizar la columna histórica.
     """
     target = normalize_run(run)
-    exact = []
-    prefix = []
-    for col in columns:
-        norm = _norm_col(col)
-        if norm == target:
-            exact.append(col)
-        elif norm.startswith(target + "-") or norm.startswith(target + "_") or norm.startswith(target + ":"):
-            prefix.append(col)
-        elif norm.startswith(target):
-            # fallback para columnas como 9060FMBCI...
-            prefix.append(col)
-    return exact[0] if exact else (prefix[0] if prefix else None)
+    aliases = [target]
+    parts = target.rsplit("-", 1)
+    if len(parts) == 2 and parts[0].isdigit() and (parts[1].isdigit() or parts[1] == "K"):
+        aliases.append(parts[0])
+    return aliases
+
+
+def column_for_run(columns, run: object):
+    """Encuentra un RUN dentro de nombres tipo '8514-ASIA' o '9060-FM...' ."""
+    for target in _run_aliases(run):
+        exact = []
+        prefix = []
+        for col in columns:
+            norm = _norm_col(col)
+            if norm == target:
+                exact.append(col)
+            elif norm.startswith(target + "-") or norm.startswith(target + "_") or norm.startswith(target + ":"):
+                prefix.append(col)
+            elif norm.startswith(target):
+                prefix.append(col)
+        if exact:
+            return exact[0]
+        if prefix:
+            return prefix[0]
+    return None
 
 
 def _payload_to_levels(payload):
@@ -117,29 +132,22 @@ def _payload_to_levels(payload):
 
 
 def category_levels(name: str):
-    """Busca la serie por contenido (RUNs), no por nombre del archivo.
-
-    Esto evita que cambios en nombres/stems rompan todos los gráficos.
-    """
+    """Busca la serie por contenido (RUNs), no por nombre del archivo."""
     stem, cfg = config_by_name(name)
     if cfg is None:
         return pd.DataFrame()
 
-    # 1) Intento directo por stem.
     candidates = []
     direct = series.get(stem)
     if direct:
         candidates.append(direct)
 
-    # 2) Intento a través del nombre de archivo presente en metrics_data.
     meta = df[df.categoria.astype(str).str.replace(" *", "", regex=False) == name.replace(" *", "")]
     if not meta.empty:
         payload = series.get(str(meta.archivo.iloc[0]))
         if payload and payload not in candidates:
             candidates.append(payload)
 
-    # 3) Fuente definitiva: escanear todas las series y elegir la que contiene
-    # el RUN BCI y la mayor cantidad de peer RUNs configurados.
     best_levels = pd.DataFrame()
     best_score = -1
     all_payloads = candidates + [p for p in series.values() if p not in candidates]
@@ -356,7 +364,6 @@ def update_quota():
 
 @app.get("/health")
 def health():
-    # Incluye diagnóstico de gráficos para detectar regresiones sin depender del frontend.
     asia = historical_te("Asia")
     europa = historical_te("Europa")
     cp = REFERENCE.get("CP Activa", {})
