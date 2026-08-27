@@ -112,10 +112,18 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     return corrected
 
 
-def compute_reference(name: str) -> dict | None:
+def compute_reference(
+    name: str,
+    peer_runs: list[str] | None = None,
+    cutoff_date: pd.Timestamp | None = None,
+) -> dict | None:
     _, cfg = base.config_by_name(name)
     if cfg is None:
         return None
+
+    if peer_runs is not None or cutoff_date is not None:
+        effective_peers = peer_runs if peer_runs is not None else [str(run) for run in cfg.get("peers", [])]
+        return v4.compute_custom_reference(name, effective_peers, cutoff_date)
 
     try:
         live = v4.compute_live_reference(name)
@@ -164,19 +172,83 @@ def persist_quota_and_recompute(frame, source_filename: str, validation: dict):
     return saved
 
 
-def compute_live_reference(name: str) -> dict | None:
+def compute_live_reference(
+    name: str,
+    peer_runs: list[str] | None = None,
+    cutoff_date: pd.Timestamp | None = None,
+) -> dict | None:
+    if peer_runs is not None or cutoff_date is not None:
+        ref = compute_reference(name, peer_runs, cutoff_date)
+        return dict(ref) if ref else None
     ref = LIVE_REFERENCES.get(name)
     if ref is None:
         ref = compute_reference(name)
     return dict(ref) if ref else None
 
 
-def live_fund_dashboard(selected_run: str):
+def _peer_selection(name: str, requested_runs: list[str] | None):
+    _, cfg = base.config_by_name(name)
+    default_runs = [normalize_run(run) for run in (cfg.get("peers", []) if cfg else [])]
+    if requested_runs is None:
+        return default_runs, False, None
+
+    selected = []
+    for run in requested_runs:
+        normalized = normalize_run(run)
+        if normalized and normalized not in selected:
+            selected.append(normalized)
+
+    invalid = [run for run in selected if run not in default_runs]
+    if invalid:
+        return default_runs, False, f"RUN fuera de la configuración histórica: {', '.join(invalid)}"
+    if not selected:
+        return default_runs, False, "Selecciona al menos un peer RUN para recalcular."
+
+    is_custom = set(selected) != set(default_runs)
+    return selected, is_custom, None
+
+
+def _cutoff_selection(name: str, peer_runs: list[str], requested_date: str | None):
+    minimum, common_maximum = v4.analysis_date_bounds(name, peer_runs)
+    default_ref = LIVE_REFERENCES.get(name) or BASELINE_REFERENCE.get(name, {})
+    configured_date = default_ref.get("Fecha")
+    configured_maximum = pd.Timestamp(configured_date).normalize() if configured_date is not None else None
+    maximum_candidates = [date for date in (common_maximum, configured_maximum) if date is not None]
+    maximum = max(maximum_candidates) if maximum_candidates else None
+    if minimum is None or maximum is None:
+        return None, None, None, False, "No hay fechas comunes para los RUN seleccionados."
+    if not requested_date:
+        return maximum, minimum, maximum, False, None
+
+    parsed = pd.to_datetime(requested_date, errors="coerce")
+    if pd.isna(parsed):
+        return maximum, minimum, maximum, False, "La fecha de corte no es válida."
+
+    selected = pd.Timestamp(parsed).normalize()
+    if selected < minimum:
+        return minimum, minimum, maximum, True, f"La primera fecha disponible es {minimum:%Y-%m-%d}."
+    if selected > maximum:
+        return maximum, minimum, maximum, False, f"La última fecha disponible es {maximum:%Y-%m-%d}."
+    return selected, minimum, maximum, selected < maximum, None
+
+
+def live_fund_dashboard(
+    selected_run: str,
+    peer_runs: list[str] | None = None,
+    cutoff_date: str | None = None,
+):
     catalog = base.bci_catalog()
     choice = next((x for x in catalog if normalize_run(x["run"]) == normalize_run(selected_run)), catalog[0])
     name = choice["fondo"]
     _, cfg = base.config_by_name(name)
-    ref = compute_live_reference(name) or base.REFERENCE.get(name, {})
+    selected_peers, is_custom, peer_error = _peer_selection(name, peer_runs)
+    selected_cutoff, cutoff_min, cutoff_max, cutoff_is_custom, cutoff_error = _cutoff_selection(
+        name, selected_peers, cutoff_date
+    )
+    analysis_is_custom = bool(is_custom or cutoff_is_custom)
+    custom_peers = selected_peers if analysis_is_custom else None
+    custom_cutoff = selected_cutoff if cutoff_is_custom else None
+    ref = compute_live_reference(name, custom_peers, custom_cutoff) or base.REFERENCE.get(name, {})
 
     percentile = ref.get("Percentil YTD")
     percentile_label = "—" if percentile is None or pd.isna(percentile) else f"{float(percentile) * 100:.0f}"
@@ -196,8 +268,26 @@ def live_fund_dashboard(selected_run: str):
         "ir_ytd": base.number(ref.get("Information Ratio YTD"), 2),
         "percentil_ytd": percentile_label,
         "cuartil_ytd": quartile,
-        "peer_rows": base.peer_rows_for(name),
-        "chart": v4.live_historical_te(name),
+        "peer_rows": v4.custom_peer_rows(name, selected_peers, custom_cutoff) if analysis_is_custom else base.peer_rows_for(name),
+        "chart": v4.live_historical_te(name, custom_peers, custom_cutoff),
+        "peer_options": [
+            {
+                "run": normalize_run(run),
+                "fondo": v4.peer_name(str(run)),
+                "selected": normalize_run(run) in selected_peers,
+            }
+            for run in cfg.get("peers", [])
+        ],
+        "peer_count": len(selected_peers),
+        "peer_is_custom": is_custom,
+        "peer_error": peer_error,
+        "cutoff_value": selected_cutoff.strftime("%Y-%m-%d") if selected_cutoff is not None else "",
+        "cutoff_min": cutoff_min.strftime("%Y-%m-%d") if cutoff_min is not None else "",
+        "cutoff_max": cutoff_max.strftime("%Y-%m-%d") if cutoff_max is not None else "",
+        "cutoff_is_custom": cutoff_is_custom,
+        "cutoff_error": cutoff_error,
+        "analysis_is_custom": analysis_is_custom,
+        "analysis_date": pd.Timestamp(ref.get("Fecha")).strftime("%Y-%m-%d") if ref.get("Fecha") is not None else "—",
     }
 
 

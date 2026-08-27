@@ -244,7 +244,11 @@ def peer_rows_for(name: str):
     return rows
 
 
-def fund_dashboard(selected_run: str):
+def fund_dashboard(
+    selected_run: str,
+    peer_runs: list[str] | None = None,
+    cutoff_date: str | None = None,
+):
     catalog = bci_catalog()
     choice = next((x for x in catalog if normalize_run(x["run"]) == normalize_run(selected_run)), catalog[0])
     name = choice["fondo"]
@@ -277,7 +281,14 @@ def fund_dashboard(selected_run: str):
 def dashboard():
     funds = bci_catalog()
     selected_run = request.args.get("fondo") or funds[0]["run"]
-    return render_template("dashboard.html", funds=funds, selected=fund_dashboard(selected_run), status=load_status())
+    peer_runs = request.args.getlist("peer") if request.args.get("peer_config") == "1" else None
+    cutoff_date = request.args.get("fecha_corte") if request.args.get("peer_config") == "1" else None
+    return render_template(
+        "dashboard.html",
+        funds=funds,
+        selected=fund_dashboard(selected_run, peer_runs, cutoff_date),
+        status=load_status(),
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])

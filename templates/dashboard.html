@@ -8,7 +8,11 @@
   .chart-card{position:relative;overflow:hidden}.chart-card:before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(61,179,247,.02),transparent 55%);pointer-events:none}.chart-wrap{position:relative;height:325px}
   .fund-card{background:linear-gradient(145deg,rgba(17,41,63,.9),rgba(9,25,40,.86));border-color:rgba(89,190,255,.18)}
   .fund-title{font-size:28px;margin:4px 0 3px;letter-spacing:-.035em}.fund-meta{color:var(--muted);font-size:12px}.date-pill{display:inline-flex;align-items:center;gap:8px;padding:8px 11px;border-radius:11px;background:rgba(77,181,242,.07);border:1px solid rgba(94,190,248,.15);font-size:12px;color:#bce9ff}.date-pill:before{content:"";width:6px;height:6px;border-radius:50%;background:#4cbfff;box-shadow:0 0 10px #4cbfff}
-  @media(max-width:720px){.finance-hero{min-height:210px}.hero-overlay{min-height:210px;padding:22px 18px;align-items:flex-end}.hero-copy h1{font-size:27px}.hero-badge{position:absolute;right:14px;top:14px;min-width:0;padding:9px 10px}.hero-badge strong{font-size:13px}.chart-wrap{height:260px}.fund-title{font-size:23px}}
+  .peer-config-card{margin-bottom:14px;background:linear-gradient(145deg,rgba(14,34,52,.92),rgba(8,24,38,.9));border-color:rgba(89,190,255,.16)}
+  .peer-config-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}.peer-config-head h3{margin:3px 0 4px;font-size:18px}.peer-config-head p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}.config-source{flex:none;padding:7px 10px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#9edcff;background:rgba(76,191,255,.08);border:1px solid rgba(76,191,255,.18)}.config-source.custom{color:#8fe2b6;background:rgba(82,216,144,.08);border-color:rgba(82,216,144,.2)}
+  .cutoff-row{display:grid;grid-template-columns:minmax(190px,260px) 1fr;gap:12px;align-items:end;margin-bottom:14px;padding:12px;border-radius:12px;background:rgba(5,18,29,.42);border:1px solid rgba(112,154,181,.13)}.cutoff-field span{display:block;margin-bottom:6px;color:#9bb4c4;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.cutoff-field input{width:100%}.cutoff-note{color:var(--muted);font-size:11px;line-height:1.5}.cutoff-note strong{color:#bce9ff}
+  .peer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.peer-option{display:block;cursor:pointer}.peer-option input{position:absolute;opacity:0;pointer-events:none}.peer-option-body{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"run name" "run hint";column-gap:10px;align-items:center;min-height:64px;padding:10px 12px;border-radius:12px;border:1px solid rgba(112,154,181,.15);background:rgba(5,18,29,.48);transition:border-color .16s ease,background .16s ease,transform .16s ease}.peer-option:hover .peer-option-body{border-color:rgba(76,191,255,.34);transform:translateY(-1px)}.peer-option input:focus-visible+.peer-option-body{outline:2px solid #53c1ff;outline-offset:2px}.peer-option input:checked+.peer-option-body{background:rgba(51,162,224,.1);border-color:rgba(83,193,255,.42);box-shadow:inset 3px 0 0 #53c1ff}.peer-run{grid-area:run;padding:6px 8px;border-radius:8px;background:rgba(83,193,255,.09);color:#75ceff;font:700 11px/1 var(--mono,monospace)}.peer-name{grid-area:name;font-size:12px}.peer-hint{grid-area:hint;color:var(--muted);font-size:10px;margin-top:3px}.peer-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:14px}.peer-reset{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;color:#a9c0d0;border:1px solid rgba(120,164,191,.17);text-decoration:none;font-size:12px;font-weight:700}.peer-reset:hover{border-color:rgba(83,193,255,.35);color:#d8f2ff}.peer-error{margin-top:11px;padding:9px 11px;border-radius:9px;color:#ffc5bd;background:rgba(255,100,82,.08);border:1px solid rgba(255,100,82,.18);font-size:12px}
+  @media(max-width:720px){.finance-hero{min-height:210px}.hero-overlay{min-height:210px;padding:22px 18px;align-items:flex-end}.hero-copy h1{font-size:27px}.hero-badge{position:absolute;right:14px;top:14px;min-width:0;padding:9px 10px}.hero-badge strong{font-size:13px}.chart-wrap{height:260px}.fund-title{font-size:23px}.peer-config-head{display:block}.config-source{display:inline-flex;margin-top:10px}.cutoff-row{grid-template-columns:1fr}.peer-grid{grid-template-columns:1fr}.peer-actions .btn,.peer-reset{width:100%}}
 </style>
 
 <section class="finance-hero">
@@ -18,8 +22,8 @@
       <h1>Peer Desempeño</h1>
     </div>
     <div class="hero-badge">
-      <small>Estado de datos</small>
-      <strong><span class="live-dot"></span>{{ status.latest_date if status and status.latest_date else '2026-08-21' }}</strong>
+      <small>Fecha de corte</small>
+      <strong><span class="live-dot"></span>{{ selected.analysis_date }}</strong>
     </div>
   </div>
 </section>
@@ -33,6 +37,52 @@
   </form>
 </div>
 
+{% if selected.peer_options %}
+<section class="card peer-config-card">
+  <form method="get">
+    <input type="hidden" name="fondo" value="{{ selected.run }}">
+    <input type="hidden" name="peer_config" value="1">
+    <div class="peer-config-head">
+      <div>
+        <div style="font-size:10px;color:var(--muted);font-weight:800;letter-spacing:.1em">CONFIGURACIÓN DEL PEER GROUP</div>
+        <h3>Selecciona los peer RUN</h3>
+        <p>Define la fecha de corte y parte desde los {{ selected.peer_options|length }} RUN de fondos_config.json. Aplicar recalcula KPI, ranking y gráfico.</p>
+      </div>
+      <span class="config-source{% if selected.analysis_is_custom %} custom{% endif %}">{% if selected.analysis_is_custom %}Escenario aplicado{% else %}JSON base · {{ selected.peer_count }}{% endif %}</span>
+    </div>
+    <div class="cutoff-row">
+      <label class="cutoff-field"><span>Fecha de corte</span><input class="control" type="date" name="fecha_corte" value="{{ selected.cutoff_value }}" min="{{ selected.cutoff_min }}" max="{{ selected.cutoff_max }}"></label>
+      <div class="cutoff-note"><strong>Datos ya cargados:</strong> puedes volver a cualquier corte disponible sin descargar otra cartola. Si eliges un día sin cuota, se usa el último cierre anterior.</div>
+    </div>
+    <div class="peer-grid">
+      {% for peer in selected.peer_options %}
+      <label class="peer-option">
+        <input type="checkbox" name="peer" value="{{ peer.run }}"{% if peer.selected %} checked{% endif %}>
+        <span class="peer-option-body">
+          <span class="peer-run">{{ peer.run }}</span>
+          <strong class="peer-name">{{ peer.fondo }}</strong>
+          <span class="peer-hint">Peer disponible en la serie histórica</span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    {% if selected.peer_error %}<div class="peer-error">{{ selected.peer_error }}</div>{% endif %}
+    {% if selected.cutoff_error %}<div class="peer-error">{{ selected.cutoff_error }}</div>{% endif %}
+    <div class="peer-actions">
+      <button class="btn" type="submit">Aplicar y recalcular</button>
+      <a class="peer-reset" href="{{ url_for('dashboard', fondo=selected.run) }}">Restablecer JSON y última fecha</a>
+    </div>
+  </form>
+</section>
+{% else %}
+<section class="card peer-config-card">
+  <div class="peer-config-head" style="margin-bottom:0">
+    <div><div style="font-size:10px;color:var(--muted);font-weight:800;letter-spacing:.1em">CONFIGURACIÓN DEL BENCHMARK</div><h3>Benchmark indexado</h3><p>Este fondo no tiene peer RUN en fondos_config.json; utiliza el índice configurado como benchmark.</p></div>
+    <span class="config-source">JSON base</span>
+  </div>
+</section>
+{% endif %}
+
 <div class="card fund-card" style="margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
     <div>
@@ -40,7 +90,7 @@
       <h2 class="fund-title">{{ selected.fondo }}</h2>
       <div class="fund-meta">{{ selected.categoria }} · RUN {{ selected.run }}</div>
     </div>
-    <div class="date-pill">Cierre {{ status.latest_date if status and status.latest_date else '2026-08-21' }}</div>
+    <div class="date-pill">Corte {{ selected.analysis_date }}</div>
   </div>
 </div>
 
