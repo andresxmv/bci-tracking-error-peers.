@@ -27,9 +27,14 @@ app.permanent_session_lifetime = timedelta(days=30)
 ADMIN_PIN = os.getenv("ADMIN_PIN", "1405")
 CMF_SESSIONS: dict[str, CMFQuotaSession] = {}
 
-# Valores del panel Python original al 25-08-2026. Se usan únicamente para
-# identificar qué fila del peer group corresponde al fondo BCI; luego las
-# métricas se calculan desde las series de valor cuota.
+# RUNs BCI confirmados desde la fuente original. Nunca se debe inferir un
+# fondo BCI por cercanía de métricas cuando conocemos su RUN.
+BCI_RUNS = {
+    "CP Activa": "9060",
+}
+
+# Valores del panel Python original al 25-08-2026. Solo sirven como fallback
+# para categorías cuyo RUN BCI aún no está incorporado en BCI_RUNS.
 BCI_REFERENCE = {
     "CD Activa": {"te": .0163, "alpha1y": .0259, "ir": 1.47},
     "CD Balanceada": {"te": .0126, "alpha1y": .0128, "ir": .96},
@@ -124,10 +129,17 @@ def bci_row_for_category(category: str):
     peers = df[df.categoria == category].copy()
     if peers.empty:
         return None
+
+    exact_run = BCI_RUNS.get(category)
+    if exact_run is not None:
+        exact = peers[peers.run.astype(str).map(normalize_run) == normalize_run(exact_run)]
+        if not exact.empty:
+            return exact.iloc[0]
+
     ref = BCI_REFERENCE.get(category)
     if ref is None:
         marked = peers[peers.es_bci]
-        return (marked.iloc[0] if not marked.empty else peers.iloc[0])
+        return marked.iloc[0] if not marked.empty else peers.iloc[0]
     score = (
         (peers.te_ewma_anual.sub(ref["te"]).abs() / .01)
         + (peers.exceso_1y.sub(ref["alpha1y"]).abs() / .02)
@@ -196,7 +208,6 @@ def ewma_tracking_error(active: pd.Series, lam: float = .94) -> float:
         return float("nan")
     w = lam ** np.arange(len(x) - 1, -1, -1, dtype=float)
     w /= w.sum()
-    # Panel original: sqrt(sum(w_t * a_t^2)) * sqrt(52)
     return math.sqrt(max(float(np.dot(w, x**2)), 0.0)) * math.sqrt(52)
 
 
@@ -256,7 +267,7 @@ def fund_dashboard(selected_run: str):
     for _, p in peers.sort_values("exceso_1y", ascending=False).iterrows():
         peer_rows.append({
             "fondo": p.fondo,
-            "es_bci": str(p.run) == str(row.run),
+            "es_bci": normalize_run(str(p.run)) == normalize_run(str(row.run)),
             "alpha": pct(p.exceso_1y, 2, True),
             "ir": number(p.IR, 2),
             "mer": pct(p.te_ewma_anual, 2),
