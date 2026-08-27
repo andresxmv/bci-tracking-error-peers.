@@ -189,6 +189,7 @@ def compute_live_reference(
 def _peer_selection(name: str, requested_runs: list[str] | None):
     _, cfg = base.config_by_name(name)
     default_runs = [normalize_run(run) for run in (cfg.get("peers", []) if cfg else [])]
+    available_runs = set(v4.available_peer_runs(name))
     if requested_runs is None:
         return default_runs, False, None
 
@@ -198,9 +199,9 @@ def _peer_selection(name: str, requested_runs: list[str] | None):
         if normalized and normalized not in selected:
             selected.append(normalized)
 
-    invalid = [run for run in selected if run not in default_runs]
+    invalid = [run for run in selected if run not in available_runs]
     if invalid:
-        return default_runs, False, f"RUN fuera de la configuración histórica: {', '.join(invalid)}"
+        return default_runs, False, f"RUN sin serie histórica disponible: {', '.join(invalid)}"
     if not selected:
         return default_runs, False, "Selecciona al menos un peer RUN para recalcular."
 
@@ -271,13 +272,10 @@ def live_fund_dashboard(
         "peer_rows": v4.custom_peer_rows(name, selected_peers, custom_cutoff) if analysis_is_custom else base.peer_rows_for(name),
         "chart": v4.live_historical_te(name, custom_peers, custom_cutoff),
         "peer_options": [
-            {
-                "run": normalize_run(run),
-                "fondo": v4.peer_name(str(run)),
-                "selected": normalize_run(run) in selected_peers,
-            }
-            for run in cfg.get("peers", [])
+            {**peer, "selected": peer["run"] in selected_peers}
+            for peer in v4.available_peer_options(name)
         ],
+        "peer_default_count": len(cfg.get("peers", [])),
         "peer_count": len(selected_peers),
         "peer_is_custom": is_custom,
         "peer_error": peer_error,

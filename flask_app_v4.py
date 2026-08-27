@@ -16,6 +16,80 @@ PROXY_URL = "https://nusycxhrfynrrbvdiiko.supabase.co/functions/v1/cmf-cartola-p
 PROXY_KEY = "bci-tracking-error-peers-v1"
 
 
+@lru_cache(maxsize=1)
+def historical_universe_levels() -> pd.DataFrame:
+    """Une todas las series históricas embebidas por RUN.
+
+    El JSON define la selección inicial, pero el usuario puede formar un peer
+    group con cualquier RUN que tenga historia suficiente en el panel.
+    """
+    by_run: dict[str, pd.Series] = {}
+    for payload in base.series.values():
+        frame = base._payload_to_levels(payload)
+        if frame.empty:
+            continue
+        for column in frame.columns:
+            run = normalize_run(str(column).split("-", 1)[0])
+            if not run:
+                continue
+            values = frame[column].dropna().sort_index()
+            if values.empty:
+                continue
+            current = by_run.get(run)
+            by_run[run] = values if current is None else current.combine_first(values).sort_index()
+    return pd.concat(by_run, axis=1).sort_index() if by_run else pd.DataFrame()
+
+
+def available_peer_runs(name: str) -> list[str]:
+    """RUN con serie histórica seleccionable, excluyendo el fondo analizado."""
+    _, cfg = base.config_by_name(name)
+    universe = historical_universe_levels()
+    if cfg is None or not cfg.get("peers") or universe.empty:
+        return []
+    bci_column = base.column_for_run(universe.columns, cfg["bci"])
+    return [normalize_run(run) for run in universe.columns if run != bci_column]
+
+
+@lru_cache(maxsize=1)
+def historical_universe_metadata() -> dict[str, dict[str, str]]:
+    embedded: dict[str, dict[str, str]] = {}
+    for candidate in base.CONFIG.values():
+        if not candidate.get("peers"):
+            continue
+        frame = ORIGINAL_CATEGORY_LEVELS(candidate["nombre"])
+        for column in frame.columns:
+            parts = str(column).split("-", 1)
+            run = normalize_run(parts[0])
+            if run and run not in embedded:
+                embedded[run] = {
+                    "fondo": parts[1].strip().title() if len(parts) > 1 else f"RUN {run}",
+                    "categoria": candidate["nombre"],
+                }
+    return embedded
+
+
+def available_peer_options(name: str) -> list[dict]:
+    """Catálogo completo para el selector, con los peers JSON identificados."""
+    _, cfg = base.config_by_name(name)
+    if cfg is None:
+        return []
+    defaults = {normalize_run(run) for run in cfg.get("peers", [])}
+    metadata = base.df.copy()
+    metadata["run_norm"] = metadata["run"].astype(str).map(normalize_run)
+    embedded_metadata = historical_universe_metadata()
+    rows = []
+    for run in available_peer_runs(name):
+        match = metadata[metadata["run_norm"] == run]
+        fallback = embedded_metadata.get(run, {"fondo": f"RUN {run}", "categoria": "Serie histórica"})
+        rows.append({
+            "run": run,
+            "fondo": str(match.iloc[0].fondo) if not match.empty else fallback["fondo"],
+            "categoria": str(match.iloc[0].categoria) if not match.empty else fallback["categoria"],
+            "json_default": run in defaults,
+        })
+    return sorted(rows, key=lambda row: (not row["json_default"], row["categoria"], row["fondo"], row["run"]))
+
+
 @lru_cache(maxsize=8)
 def _dollar_year(year: int) -> pd.Series:
     try:
@@ -74,15 +148,23 @@ def live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.D
     levels = ORIGINAL_CATEGORY_LEVELS(name).copy()
     if levels.empty:
         return levels
-    gross = load_gross_returns()
-    if gross.empty:
-        return levels
     _, cfg = base.config_by_name(name)
     if cfg is None:
         return levels
 
     runs = [cfg.get("bci"), *cfg.get("peers", []), *(extra_runs or [])]
     runs = list(dict.fromkeys(normalize_run(run) for run in runs if run))
+    universe = historical_universe_levels()
+    for run in runs:
+        if base.column_for_run(levels.columns, run) is not None:
+            continue
+        source = base.column_for_run(universe.columns, run)
+        if source is not None:
+            levels = levels.join(universe[source].rename(source), how="outer")
+
+    gross = load_gross_returns()
+    if gross.empty:
+        return levels.sort_index()
     for run in runs:
         col = base.column_for_run(levels.columns, run)
         if col is None:

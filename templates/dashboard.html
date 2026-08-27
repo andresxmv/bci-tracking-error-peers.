@@ -11,8 +11,8 @@
   .peer-config-card{margin-bottom:14px;background:linear-gradient(145deg,rgba(14,34,52,.92),rgba(8,24,38,.9));border-color:rgba(89,190,255,.16)}
   .peer-config-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}.peer-config-head h3{margin:3px 0 4px;font-size:18px}.peer-config-head p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}.config-source{flex:none;padding:7px 10px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#9edcff;background:rgba(76,191,255,.08);border:1px solid rgba(76,191,255,.18)}.config-source.custom{color:#8fe2b6;background:rgba(82,216,144,.08);border-color:rgba(82,216,144,.2)}
   .cutoff-row{display:grid;grid-template-columns:minmax(190px,260px) 1fr;gap:12px;align-items:end;margin-bottom:14px;padding:12px;border-radius:12px;background:rgba(5,18,29,.42);border:1px solid rgba(112,154,181,.13)}.cutoff-field span{display:block;margin-bottom:6px;color:#9bb4c4;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.cutoff-field input{width:100%}.cutoff-note{color:var(--muted);font-size:11px;line-height:1.5}.cutoff-note strong{color:#bce9ff}
-  .peer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.peer-option{display:block;cursor:pointer}.peer-option input{position:absolute;opacity:0;pointer-events:none}.peer-option-body{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"run name" "run hint";column-gap:10px;align-items:center;min-height:64px;padding:10px 12px;border-radius:12px;border:1px solid rgba(112,154,181,.15);background:rgba(5,18,29,.48);transition:border-color .16s ease,background .16s ease,transform .16s ease}.peer-option:hover .peer-option-body{border-color:rgba(76,191,255,.34);transform:translateY(-1px)}.peer-option input:focus-visible+.peer-option-body{outline:2px solid #53c1ff;outline-offset:2px}.peer-option input:checked+.peer-option-body{background:rgba(51,162,224,.1);border-color:rgba(83,193,255,.42);box-shadow:inset 3px 0 0 #53c1ff}.peer-run{grid-area:run;padding:6px 8px;border-radius:8px;background:rgba(83,193,255,.09);color:#75ceff;font:700 11px/1 var(--mono,monospace)}.peer-name{grid-area:name;font-size:12px}.peer-hint{grid-area:hint;color:var(--muted);font-size:10px;margin-top:3px}.peer-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:14px}.peer-reset{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;color:#a9c0d0;border:1px solid rgba(120,164,191,.17);text-decoration:none;font-size:12px;font-weight:700}.peer-reset:hover{border-color:rgba(83,193,255,.35);color:#d8f2ff}.peer-error{margin-top:11px;padding:9px 11px;border-radius:9px;color:#ffc5bd;background:rgba(255,100,82,.08);border:1px solid rgba(255,100,82,.18);font-size:12px}
-  @media(max-width:720px){.finance-hero{min-height:210px}.hero-overlay{min-height:210px;padding:22px 18px;align-items:flex-end}.hero-copy h1{font-size:27px}.hero-badge{position:absolute;right:14px;top:14px;min-width:0;padding:9px 10px}.hero-badge strong{font-size:13px}.chart-wrap{height:260px}.fund-title{font-size:23px}.peer-config-head{display:block}.config-source{display:inline-flex;margin-top:10px}.cutoff-row{grid-template-columns:1fr}.peer-grid{grid-template-columns:1fr}.peer-actions .btn,.peer-reset{width:100%}}
+  .peer-picker{border:1px solid rgba(112,154,181,.14);border-radius:13px;overflow:hidden;background:rgba(5,18,29,.34)}.peer-tools{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:9px;align-items:center;padding:11px;border-bottom:1px solid rgba(112,154,181,.13)}.peer-search{position:relative}.peer-search input{padding-left:34px}.peer-search:before{content:"⌕";position:absolute;left:12px;top:50%;transform:translateY(-52%);color:#75ceff;font-size:18px;z-index:1}.peer-counter{white-space:nowrap;color:var(--muted);font-size:11px}.peer-counter strong{color:#bce9ff}.peer-tool-button{padding:9px 10px;border-radius:9px;border:1px solid rgba(120,164,191,.17);background:rgba(16,39,59,.75);color:#b9d4e5;font-size:11px;font-weight:750;cursor:pointer}.peer-tool-button:hover{border-color:rgba(83,193,255,.35);color:#e3f6ff}.peer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;max-height:430px;overflow:auto;padding:11px;scrollbar-color:rgba(83,193,255,.28) transparent}.peer-option{display:block;cursor:pointer}.peer-option[hidden]{display:none}.peer-option input{position:absolute;opacity:0;pointer-events:none}.peer-option-body{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"run name" "run hint";column-gap:10px;align-items:center;min-height:64px;padding:10px 12px;border-radius:12px;border:1px solid rgba(112,154,181,.15);background:rgba(5,18,29,.48);transition:border-color .16s ease,background .16s ease,transform .16s ease}.peer-option:hover .peer-option-body{border-color:rgba(76,191,255,.34);transform:translateY(-1px)}.peer-option input:focus-visible+.peer-option-body{outline:2px solid #53c1ff;outline-offset:2px}.peer-option input:checked+.peer-option-body{background:rgba(51,162,224,.1);border-color:rgba(83,193,255,.42);box-shadow:inset 3px 0 0 #53c1ff}.peer-run{grid-area:run;padding:6px 8px;border-radius:8px;background:rgba(83,193,255,.09);color:#75ceff;font:700 11px/1 var(--mono,monospace)}.peer-name{grid-area:name;font-size:12px}.peer-hint{grid-area:hint;color:var(--muted);font-size:10px;margin-top:3px}.peer-default{color:#8fe2b6}.peer-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:14px}.peer-reset{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;color:#a9c0d0;border:1px solid rgba(120,164,191,.17);text-decoration:none;font-size:12px;font-weight:700}.peer-reset:hover{border-color:rgba(83,193,255,.35);color:#d8f2ff}.peer-error{margin-top:11px;padding:9px 11px;border-radius:9px;color:#ffc5bd;background:rgba(255,100,82,.08);border:1px solid rgba(255,100,82,.18);font-size:12px}
+  @media(max-width:720px){.finance-hero{min-height:210px}.hero-overlay{min-height:210px;padding:22px 18px;align-items:flex-end}.hero-copy h1{font-size:27px}.hero-badge{position:absolute;right:14px;top:14px;min-width:0;padding:9px 10px}.hero-badge strong{font-size:13px}.chart-wrap{height:260px}.fund-title{font-size:23px}.peer-config-head{display:block}.config-source{display:inline-flex;margin-top:10px}.cutoff-row{grid-template-columns:1fr}.peer-tools{grid-template-columns:1fr 1fr}.peer-search,.peer-counter{grid-column:1/-1}.peer-grid{grid-template-columns:1fr;max-height:390px}.peer-actions .btn,.peer-reset{width:100%}}
 </style>
 
 <section class="finance-hero">
@@ -46,7 +46,7 @@
       <div>
         <div style="font-size:10px;color:var(--muted);font-weight:800;letter-spacing:.1em">CONFIGURACIÓN DEL PEER GROUP</div>
         <h3>Selecciona los peer RUN</h3>
-        <p>Define la fecha de corte y parte desde los {{ selected.peer_options|length }} RUN de fondos_config.json. Aplicar recalcula KPI, ranking y gráfico.</p>
+        <p>El JSON deja {{ selected.peer_default_count }} RUN marcados por defecto. Puedes buscar y agregar cualquiera de los {{ selected.peer_options|length }} fondos con serie histórica.</p>
       </div>
       <span class="config-source{% if selected.analysis_is_custom %} custom{% endif %}">{% if selected.analysis_is_custom %}Escenario aplicado{% else %}JSON base · {{ selected.peer_count }}{% endif %}</span>
     </div>
@@ -54,17 +54,24 @@
       <label class="cutoff-field"><span>Fecha de corte</span><input class="control" type="date" name="fecha_corte" value="{{ selected.cutoff_value }}" min="{{ selected.cutoff_min }}" max="{{ selected.cutoff_max }}"></label>
       <div class="cutoff-note"><strong>Datos ya cargados:</strong> puedes volver a cualquier corte disponible sin descargar otra cartola. Si eliges un día sin cuota, se usa el último cierre anterior.</div>
     </div>
-    <div class="peer-grid">
+    <div class="peer-picker">
+      <div class="peer-tools">
+        <label class="peer-search"><input class="control" id="peerSearch" type="search" placeholder="Buscar por fondo, categoría o RUN" autocomplete="off" aria-label="Buscar peer RUN"></label>
+        <div class="peer-counter"><strong id="peerSelectedCount">{{ selected.peer_count }}</strong> seleccionados · {{ selected.peer_options|length }} disponibles</div>
+        <div style="display:flex;gap:7px"><button class="peer-tool-button" type="button" data-peer-action="visible">Seleccionar visibles</button><button class="peer-tool-button" type="button" data-peer-action="clear">Limpiar</button></div>
+      </div>
+      <div class="peer-grid" id="peerGrid">
       {% for peer in selected.peer_options %}
-      <label class="peer-option">
+      <label class="peer-option" data-peer-search="{{ peer.run }} {{ peer.fondo }} {{ peer.categoria }}">
         <input type="checkbox" name="peer" value="{{ peer.run }}"{% if peer.selected %} checked{% endif %}>
         <span class="peer-option-body">
           <span class="peer-run">{{ peer.run }}</span>
           <strong class="peer-name">{{ peer.fondo }}</strong>
-          <span class="peer-hint">Peer disponible en la serie histórica</span>
+          <span class="peer-hint">{{ peer.categoria }}{% if peer.json_default %} · <span class="peer-default">JSON base</span>{% endif %}</span>
         </span>
       </label>
       {% endfor %}
+      </div>
     </div>
     {% if selected.peer_error %}<div class="peer-error">{{ selected.peer_error }}</div>{% endif %}
     {% if selected.cutoff_error %}<div class="peer-error">{{ selected.cutoff_error }}</div>{% endif %}
@@ -82,6 +89,26 @@
   </div>
 </section>
 {% endif %}
+
+<script>
+(()=>{
+  const search=document.getElementById('peerSearch');
+  const grid=document.getElementById('peerGrid');
+  const count=document.getElementById('peerSelectedCount');
+  if(!search||!grid||!count)return;
+  const options=[...grid.querySelectorAll('.peer-option')];
+  const boxes=options.map(option=>option.querySelector('input[name="peer"]'));
+  const normalize=value=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const updateCount=()=>{count.textContent=boxes.filter(box=>box.checked).length};
+  search.addEventListener('input',()=>{const term=normalize(search.value.trim());options.forEach(option=>{option.hidden=term&&!normalize(option.dataset.peerSearch||'').includes(term)})});
+  boxes.forEach(box=>box.addEventListener('change',updateCount));
+  document.querySelectorAll('[data-peer-action]').forEach(button=>button.addEventListener('click',()=>{
+    const visible=options.filter(option=>!option.hidden);
+    (button.dataset.peerAction==='clear'?boxes:visible.map(option=>option.querySelector('input'))).forEach(box=>{box.checked=button.dataset.peerAction!=='clear'});
+    updateCount();
+  }));
+})();
+</script>
 
 <div class="card fund-card" style="margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
