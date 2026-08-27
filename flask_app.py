@@ -5,6 +5,7 @@ import gzip
 import json
 import math
 import os
+import re
 import secrets
 from datetime import timedelta
 from pathlib import Path
@@ -68,15 +69,39 @@ def number(x, digits=2):
 
 
 def run_from_series_col(col: str) -> str:
-    """Extrae el RUN sin destruir dígitos verificadores, p.ej. 8514-6.
-
-    Las columnas históricas vienen como 'RUN - Nombre'. Antes se hacía split('-')
-    y 8514-6 terminaba como 8514, dejando Asia sin serie histórica.
-    """
+    """Extrae el RUN desde columnas tipo RUN-NOMBRE o RUN-DV-NOMBRE."""
     text = str(col).strip()
+    # Si la columna trae un dígito verificador explícito, conservarlo.
+    m = re.match(r"^(\d+)-([0-9Kk])-(.+)$", text)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    # Formato real de las series embebidas: 9060-FM BCI CP ACTIVA,
+    # 8513-EUROPA, 8514-ASIA, etc.
+    m = re.match(r"^(\d+)-", text)
+    if m:
+        return m.group(1)
     if " - " in text:
         return text.split(" - ", 1)[0].strip()
     return text
+
+
+def run_aliases(value: object) -> set[str]:
+    """Alias aceptados para un RUN.
+
+    Algunas series históricas omiten el dígito verificador. Por ejemplo,
+    fondos_config.json usa 8514-6 para Asia, mientras la serie viene como
+    8514-ASIA. Ambos deben considerarse el mismo fondo.
+    """
+    run = normalize_run(value)
+    aliases = {run}
+    m = re.fullmatch(r"(\d+)-[0-9K]", run)
+    if m:
+        aliases.add(m.group(1))
+    return aliases
+
+
+def same_run(a: object, b: object) -> bool:
+    return bool(run_aliases(a) & run_aliases(b))
 
 
 def config_by_name(name: str):
@@ -112,9 +137,21 @@ def configured_columns(name: str, levels: pd.DataFrame):
     _, cfg = config_by_name(name)
     if cfg is None or levels.empty:
         return None, []
-    run_map = {normalize_run(run_from_series_col(c)): c for c in levels.columns}
-    bci = run_map.get(normalize_run(cfg["bci"]))
-    peers = [run_map.get(normalize_run(r)) for r in cfg.get("peers", [])]
+
+    run_map: dict[str, str] = {}
+    for col in levels.columns:
+        parsed = run_from_series_col(col)
+        for alias in run_aliases(parsed):
+            run_map.setdefault(alias, col)
+
+    def lookup(configured_run: object):
+        for alias in run_aliases(configured_run):
+            if alias in run_map:
+                return run_map[alias]
+        return None
+
+    bci = lookup(cfg["bci"])
+    peers = [lookup(r) for r in cfg.get("peers", [])]
     return bci, [c for c in peers if c is not None]
 
 
@@ -163,11 +200,9 @@ def historical_te(name: str):
 
     for i in range(7, len(returns)):
         window = returns.iloc[: i + 1].tail(52)
-        # BCI siempre contra el promedio de los peers configurados en fondos_config.json.
         bci_active = window[bci_col] - window[peer_cols].mean(axis=1)
         bci_hist.loc[returns.index[i]] = ewma_te(bci_active, annualize=annualize)
 
-        # Cada peer se compara contra el resto del conjunto configurado para construir P75.
         for peer in peer_cols:
             others = [c for c in funds if c != peer]
             peer_active = window[peer] - window[others].mean(axis=1)
@@ -198,14 +233,14 @@ def peer_rows_for(name: str):
 
     ytd = configured_ytd(name)
     name_by_run = {}
-    wanted = {normalize_run(cfg["bci"]), *[normalize_run(r) for r in cfg.get("peers", [])]}
-    subset = df[df.run.astype(str).map(normalize_run).isin(wanted)].copy()
-    for _, r in subset.iterrows():
-        name_by_run[normalize_run(r.run)] = str(r.fondo)
+    configured = [cfg["bci"], *cfg.get("peers", [])]
+    for _, r in df.iterrows():
+        if any(same_run(r.run, x) for x in configured):
+            for alias in run_aliases(r.run):
+                name_by_run[alias] = str(r.fondo)
 
     rows = []
-    _, cfg_full = config_by_name(name)
-    annualize = bool(cfg_full.get("te_anualizado", True))
+    annualize = bool(cfg.get("te_anualizado", True))
     for fund in funds:
         run = run_from_series_col(fund)
         others = [c for c in funds if c != fund]
@@ -221,9 +256,17 @@ def peer_rows_for(name: str):
                 p = float((competitors > float(ytd[fund])).mean() * 100)
                 p_label = f"{p:.0f}"
 
+        display_name = None
+        for alias in run_aliases(run):
+            if alias in name_by_run:
+                display_name = name_by_run[alias]
+                break
+        if display_name is None:
+            display_name = str(fund).split("-", 1)[-1]
+
         rows.append({
-            "fondo": name_by_run.get(normalize_run(run), str(fund).split(" - ", 1)[-1]),
-            "es_bci": normalize_run(run) == normalize_run(cfg["bci"]),
+            "fondo": display_name,
+            "es_bci": same_run(run, cfg["bci"]),
             "alpha": pct(alpha_1y, 2, True),
             "ir": number(ir, 2),
             "mer": pct(te, 2),
@@ -236,7 +279,7 @@ def peer_rows_for(name: str):
 
 def fund_dashboard(selected_run: str):
     catalog = bci_catalog()
-    choice = next((x for x in catalog if normalize_run(x["run"]) == normalize_run(selected_run)), catalog[0])
+    choice = next((x for x in catalog if same_run(x["run"], selected_run)), catalog[0])
     name = choice["fondo"]
     _, cfg = config_by_name(name)
     ref = REFERENCE.get(name, {})
@@ -350,12 +393,14 @@ def update_quota():
 @app.get("/health")
 def health():
     asia = historical_te("Asia")
+    europa = historical_te("Europa")
     cp = fund_dashboard("9060")
     return {
         "ok": True,
         "funds": len(CONFIG),
         "reference_rows": len(REFERENCE),
         "asia_chart_points": len(asia["labels"]),
+        "europa_chart_points": len(europa["labels"]),
         "cp_activa_ytd": cp["ret_ytd"],
         "cp_activa_peers": len(cp["peer_rows"]) - 1,
     }, 200
