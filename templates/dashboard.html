@@ -8,6 +8,12 @@
   </form>
 </div>
 
+<div class="card" style="margin-bottom:14px;padding:12px 16px;border-left:4px solid var(--blue)">
+  <div style="font-size:12px;color:var(--muted);font-weight:800">FECHA DE CIERRE MOSTRADA</div>
+  <div style="font-size:18px;font-weight:800;margin-top:3px">{{ status.latest_date if status and status.latest_date else '2026-08-21' }}</div>
+  <div style="font-size:12px;color:var(--muted);margin-top:2px">Métricas y comparaciones calculadas con información disponible hasta esta fecha.</div>
+</div>
+
 <div class="card" style="margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
     <div>
