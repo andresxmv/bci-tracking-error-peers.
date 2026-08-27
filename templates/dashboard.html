@@ -53,7 +53,7 @@
 </div>
 
 <div class="grid kpis" style="margin-bottom:14px">
-  <div class="metric"><small>MER / TE EWMA</small><strong>{{ selected.mer }}</strong></div>
+  <div class="metric"><small>Tracking Error EWMA</small><strong>{{ selected.mer }}</strong></div>
   <div class="metric"><small>Alpha 1 año</small><strong>{{ selected.alpha_1y }}</strong></div>
   <div class="metric"><small>Última cuota guardada</small><strong>{{ status.latest_date if status else '—' }}</strong></div>
 </div>
@@ -65,13 +65,13 @@
 
 <div class="card desktop-table">
   <div class="section-title"><h3>Peer group · {{ selected.categoria }}</h3><span>Comparación 1 año</span></div>
-  <div class="table-wrap"><table class="risk"><thead><tr><th>Fondo</th><th>MER / TE</th><th>Alpha 1A</th><th>IR 12M</th><th>Percentil</th></tr></thead><tbody>
+  <div class="table-wrap"><table class="risk"><thead><tr><th>Fondo</th><th>Tracking Error EWMA</th><th>Alpha 1A</th><th>IR 12M</th><th>Percentil</th></tr></thead><tbody>
     {% for r in selected.peer_rows %}<tr><td>{{ r.fondo }} {% if r.es_bci %}<span class="tag">BCI</span>{% endif %}</td><td class="te">{{ r.mer }}</td><td>{{ r.alpha }}</td><td>{{ r.ir }}</td><td>{{ r.percentil }}</td></tr>{% endfor %}
   </tbody></table></div>
 </div>
 
 <div class="mobile-cards">
-  {% for r in selected.peer_rows %}<div class="mcard"><div class="mhead"><div><strong>{{ r.fondo }}</strong>{% if r.es_bci %}<div><span class="tag">BCI</span></div>{% endif %}</div><div style="font-size:12px;color:var(--muted)">P{{ r.percentil }}</div></div><div class="mgrid"><div class="mcell"><div class="mlabel">MER / TE</div><div class="mval" style="color:var(--blue)">{{ r.mer }}</div></div><div class="mcell"><div class="mlabel">Alpha 1A</div><div class="mval">{{ r.alpha }}</div></div><div class="mcell"><div class="mlabel">IR 12M</div><div class="mval">{{ r.ir }}</div></div><div class="mcell"><div class="mlabel">Percentil</div><div class="mval">{{ r.percentil }}</div></div></div></div>{% endfor %}
+  {% for r in selected.peer_rows %}<div class="mcard"><div class="mhead"><div><strong>{{ r.fondo }}</strong>{% if r.es_bci %}<div><span class="tag">BCI</span></div>{% endif %}</div><div style="font-size:12px;color:var(--muted)">P{{ r.percentil }}</div></div><div class="mgrid"><div class="mcell"><div class="mlabel">Tracking Error EWMA</div><div class="mval" style="color:var(--blue)">{{ r.mer }}</div></div><div class="mcell"><div class="mlabel">Alpha 1A</div><div class="mval">{{ r.alpha }}</div></div><div class="mcell"><div class="mlabel">IR 12M</div><div class="mval">{{ r.ir }}</div></div><div class="mcell"><div class="mlabel">Percentil</div><div class="mval">{{ r.percentil }}</div></div></div></div>{% endfor %}
 </div>
 
 <script>
