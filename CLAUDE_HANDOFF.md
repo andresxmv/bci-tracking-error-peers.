@@ -3,7 +3,8 @@
 Fecha del handoff: **27-08-2026**  
 Repositorio: `https://github.com/andresxmv/bci-tracking-error-peers`  
 Rama: `main`  
-HEAD local y remoto: `e49101f` (`Anchor custom cutoff YTD to validated baseline`)  
+HEAD de partida: `607ea93` (`Fix mixed CLP and PROM FX conversion`); la corrección
+de configuración pendiente se publicará en un commit posterior.
 Servicio Railway: `bci-tracking-error-final`  
 URL pública: [bci-tracking-error-final-production.up.railway.app](https://bci-tracking-error-final-production.up.railway.app/)
 
@@ -22,7 +23,7 @@ La aplicación es un dashboard Flask para comparar fondos BCI con sus peer group
 - Flujo `/login` → `/actualizar` para descargar una cartola CMF con CAPTCHA.
 - Persistencia de cartolas y retornos brutos para que una fecha ya cargada no vuelva a abrir un CAPTCHA.
 
-El problema pendiente comunicado por el usuario es el **Retorno YTD al corte 31-07-2026**. El usuario indica que para “Activa” se muestra aproximadamente **11,88% / 11,8%**, pero espera aproximadamente **11,66% / 11,7%**. Hay dos fondos llamados Activa y primero hay que identificar cuál está mirando:
+La auditoría del corte **31-07-2026** ya confirma el YTD correcto de ambos fondos “Activa”:
 
 | Fondo | RUN BCI | Evidencia local al 31-07-2026 | Comentario |
 |---|---:|---:|---|
@@ -93,10 +94,13 @@ El requisito original de Railway era desplegar `c537dbca...` o un commit posteri
 
 ## 5. Configuración de P-groups
 
-`fondos_config.json` fue generado desde el Excel entregado por el usuario (`Diccionario Categorías.xlsx`). Actualmente contiene **20 fondos BCI**, **18 grupos** y **177 entradas peer**. El RUN `10331` fue excluido expresamente mediante:
+`fondos_config.json` refleja exactamente la columna `Run` del Excel entregado por
+el usuario (`Diccionario Categorías.xlsx`): **25 fondos BCI**, **18 grupos** y
+**219 RUN únicos**. Se conserva el BCI de cada categoría en el campo `bci` y se
+guardan como peers los demás RUN de esa categoría. No hay exclusiones globales:
 
 ```python
-EXCLUDED_RUNS = frozenset({"10331"})
+EXCLUDED_RUNS = frozenset()
 ```
 
 Los fondos BCI configurados son: CD Activa, CD Balanceada, CD Conservadora, CP Activa, CP Balanceada, CP Conservadora, Estratégico $ H 1 Año, Estratégico UF H 1 Año, Estratégico UF H 3 Años, Estratégico UF H 5 Años, Estratégico UF > 5 Años, Asia, Europa, Emergente Global, Estados Unidos, Global Titan, Acciones Chilenas, Top Picks, Acciones Globales y América Latina.
@@ -109,6 +113,12 @@ CP Activa  : BCI 9060; peers 8908, 8435, 8785, 8844, 10064
 ```
 
 La configuración actual de CP Activa tiene **5 peers** porque así aparece en el Excel. El baseline antiguo de `panel_metrics_reference.json` dice “Peer group (4 fondos)” y contiene un benchmark histórico con 4 peers. Esa diferencia es importante: no mezclar automáticamente el baseline viejo con la nueva composición sin documentarlo y probarlo.
+
+Top Picks contiene los 27 peers del Excel, incluidos `9362`, `8490`, `9537`,
+`9685`, `10068`, `8043` y `10331`; Acciones Chilenas contiene sus 13 peers,
+incluidos `9537`, `10068` y `10331`. Los RUN configurados sin cartola diaria
+actual siguen visibles y se marcan `sin historia cargada`; al cargar su cartola
+se incorporan al cálculo sin editar la configuración.
 
 Los nombres mostrados en los desplegables provienen de `grupo` en `fondos_config.json`. Los peers sin niveles embebidos se siguen mostrando y aparecen con la marca `sin historia cargada`; si existe una cartola runtime, se les crea un nivel sintético 100 para poder calcular retornos relativos.
 
@@ -356,4 +366,3 @@ No descargar otra cartola sólo para “ver si se arregla”: la fecha 31-07 ya 
 ## 13. Nota de tokens
 
 No se consumió ningún crédito de reset ni se hizo una recuperación automática de tokens. Para continuar de forma económica, Claude debería empezar por inspección local y pruebas deterministas; dejar Railway/CAPTCHA para el final, sólo si los datos locales no permiten resolver la discrepancia.
-

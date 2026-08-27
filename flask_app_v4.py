@@ -32,7 +32,10 @@ app = base.app
 ORIGINAL_CATEGORY_LEVELS = base.category_levels
 PROXY_URL = "https://nusycxhrfynrrbvdiiko.supabase.co/functions/v1/cmf-cartola-proxy"
 PROXY_KEY = "bci-tracking-error-peers-v1"
-EXCLUDED_RUNS = frozenset({"10331"})
+# The Excel dictionary is the authoritative peer universe. A configured RUN
+# without current history remains visible and becomes usable when its cartola
+# is loaded; no configured peer is silently removed from the calculation.
+EXCLUDED_RUNS = frozenset()
 REFERENCE_BASELINE = {key: dict(value) for key, value in base.REFERENCE.items()}
 
 
@@ -98,6 +101,10 @@ def available_peer_options(name: str) -> list[dict]:
         return []
     defaults = {normalize_run(run) for run in cfg.get("peers", [])}
     history_runs = set(historical_universe_levels().columns.astype(str))
+    # A RUN may not be present in the embedded weekly workbook but can already
+    # have daily returns in the versioned seed or in runtime_data. Reflect that
+    # fact in the selector instead of labelling a usable peer as unavailable.
+    history_runs.update(_gross_by_run(_returns_signature()).keys())
     metadata = base.df.copy()
     metadata["run_norm"] = metadata["run"].astype(str).map(normalize_run)
     embedded_metadata = historical_universe_metadata()
