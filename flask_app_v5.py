@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 
 import pandas as pd
@@ -11,16 +10,19 @@ from quota_update import load_gross_returns, normalize_run
 
 app = base.app
 
-# Métricas recalculadas después de cada actualización.
+# Congelamos el panel original como baseline histórico. Nunca se vuelve a usar
+# una referencia ya corregida como punto de partida, evitando doble composición.
+BASELINE_REFERENCE = {k: dict(v) for k, v in base.REFERENCE.items()}
 LIVE_REFERENCES: dict[str, dict] = {}
 _ORIGINAL_PERSIST_QUOTA = base.persist_quota
 
 
 def _post_baseline_returns(cfg: dict, baseline_date: pd.Timestamp, reference_date: pd.Timestamp) -> dict[str, pd.Series]:
-    """Retornos brutos diarios posteriores al corte de referencia del ZIP."""
+    """Retornos brutos diarios posteriores al corte histórico validado."""
     gross = load_gross_returns()
     if gross.empty:
         return {}
+
     gross = gross.copy()
     gross["fecha"] = pd.to_datetime(gross["fecha"], errors="coerce").dt.normalize()
     gross["run_norm"] = gross["run"].astype(str).map(normalize_run)
@@ -45,13 +47,13 @@ def _compound(s: pd.Series) -> float:
 
 
 def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
-    """YTD = 31-12 previo hasta la última cartola disponible.
+    """YTD calendario = 31-12 previo -> última cartola disponible.
 
-    El YTD validado del panel de referencia es la base al corte histórico
-    original. Después se compone exclusivamente con los retornos CMF posteriores
-    a ese corte. Nunca se usa la ventana de 52 semanas como base del YTD.
+    La base es el YTD validado al corte histórico original (21-08-2026 en el
+    dataset actual). Después se compone únicamente con retornos CMF posteriores
+    a ese corte. La ventana de 52 semanas nunca se usa para construir el YTD.
     """
-    baseline = base.REFERENCE.get(name)
+    baseline = BASELINE_REFERENCE.get(name)
     if not baseline:
         return live_ref
 
@@ -66,6 +68,7 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     base_port = baseline.get("Retorno YTD")
     if base_port is None or pd.isna(base_port):
         return live_ref
+
     post_port = _compound(post.get(bci_run, pd.Series(dtype=float)))
     portfolio_ytd = (1.0 + float(base_port)) * (1.0 + post_port) - 1.0
 
@@ -88,15 +91,17 @@ def _correct_calendar_ytd(name: str, cfg: dict, live_ref: dict) -> dict:
     corrected = dict(live_ref)
     corrected["Fecha"] = reference_date
     corrected["Retorno YTD"] = float(portfolio_ytd)
+
     if not pd.isna(benchmark_ytd):
         corrected["Retorno benchmark YTD"] = float(benchmark_ytd)
         corrected["Alpha YTD"] = float(portfolio_ytd - benchmark_ytd)
 
+    # Mientras no exista una reconstrucción histórica individual de cada peer
+    # para YTD, conservamos el ranking validado del corte histórico.
     corrected["Percentil YTD"] = baseline.get("Percentil YTD")
     corrected["Cuartil YTD"] = baseline.get("Cuartil YTD")
 
-    # TE e IR son semanales: antes del próximo viernes completo conservamos el
-    # último cierre semanal validado, no un valor fabricado con días parciales.
+    # TE / IR se actualizan con cierres semanales completos.
     next_friday = baseline_date + pd.offsets.Week(weekday=4)
     if reference_date < next_friday:
         corrected["TE EWMA anual"] = baseline.get("TE EWMA anual")
@@ -110,14 +115,17 @@ def compute_reference(name: str) -> dict | None:
     _, cfg = base.config_by_name(name)
     if cfg is None:
         return None
+
     try:
         live = v4.compute_live_reference(name)
     except Exception:
         live = None
+
     if not live:
-        live = dict(base.REFERENCE.get(name, {}))
+        live = dict(BASELINE_REFERENCE.get(name, {}))
     if not live:
         return None
+
     return _correct_calendar_ytd(name, cfg, dict(live))
 
 
@@ -127,11 +135,19 @@ def recompute_all_metrics() -> dict[str, dict]:
         ref = compute_reference(item["fondo"])
         if ref:
             refreshed[item["fondo"]] = ref
+
     LIVE_REFERENCES.clear()
     LIVE_REFERENCES.update(refreshed)
+
+    # CLAVE: además de nuestro cache, reemplazamos la referencia que usa
+    # flask_app_v2. Así, aunque una ruta llame al fund_dashboard original,
+    # el dashboard queda obligado a mostrar el YTD corregido.
+    for name, ref in refreshed.items():
+        base.REFERENCE[name] = dict(ref)
+
     cp = LIVE_REFERENCES.get("CP Activa", {})
     print(
-        "LIVE_VERIFY_CP_ACTIVA",
+        "V5_RUNTIME_CP_ACTIVA",
         "fecha=", cp.get("Fecha"),
         "ytd=", cp.get("Retorno YTD"),
         "alpha_ytd=", cp.get("Alpha YTD"),
@@ -184,21 +200,23 @@ def live_fund_dashboard(selected_run: str):
 
 
 def verified_health():
-    """Healthcheck falla si CP Activa vuelve al YTD falso cercano a 3,79%."""
     ref = compute_live_reference("CP Activa") or {}
     ytd = ref.get("Retorno YTD")
     dt = ref.get("Fecha")
+
     valid_ytd = ytd is not None and not pd.isna(ytd) and 0.10 < float(ytd) < 0.25
     valid_date = dt is not None and pd.Timestamp(dt).normalize() >= pd.Timestamp("2026-08-25")
+
     payload = {
         "ok": bool(valid_ytd and valid_date),
+        "runtime": "flask_app_v5_authoritative_ytd",
         "cp_activa_fecha": pd.Timestamp(dt).strftime("%Y-%m-%d") if dt is not None else None,
         "cp_activa_ytd": float(ytd) if ytd is not None and not pd.isna(ytd) else None,
         "cp_activa_alpha_ytd": ref.get("Alpha YTD"),
         "cp_activa_ir": ref.get("Information Ratio"),
     }
-    print("LIVE_HEALTH", payload, flush=True)
-    return (payload, 200 if payload["ok"] else 500)
+    print("V5_HEALTH", payload, flush=True)
+    return payload, (200 if payload["ok"] else 500)
 
 
 base.persist_quota = persist_quota_and_recompute
@@ -212,7 +230,6 @@ if "health" in app.view_functions:
 
 @app.after_request
 def _disable_browser_cache(response):
-    # El dashboard es server-side y debe reflejar siempre la última cartola.
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
