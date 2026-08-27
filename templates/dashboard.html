@@ -11,7 +11,7 @@
 <div class="card" style="margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
     <div>
-      <div style="font-size:12px;color:var(--muted);font-weight:800">FONDO SELECCIONADO</div>
+      <div style="font-size:12px;color:var(--muted);font-weight:800">FONDO BCI SELECCIONADO</div>
       <h2 style="margin:4px 0 2px">{{ selected.fondo }}</h2>
       <div style="color:var(--muted);font-size:13px">{{ selected.categoria }} · RUN {{ selected.run }}</div>
     </div>
@@ -20,18 +20,16 @@
 </div>
 
 <div class="grid kpis" style="margin-bottom:14px">
-  <div class="metric"><small>MER / TE EWMA</small><strong>{{ selected.mer }}</strong></div>
   <div class="metric"><small>Retorno YTD</small><strong>{{ selected.ret_ytd }}</strong></div>
-  <div class="metric"><small>Alpha 1 año</small><strong>{{ selected.alpha_1y }}</strong></div>
   <div class="metric"><small>Alpha YTD</small><strong>{{ selected.alpha_ytd }}</strong></div>
   <div class="metric"><small>Information Ratio 12M</small><strong>{{ selected.ir_12m }}</strong></div>
+  <div class="metric"><small>Percentil retorno YTD</small><strong>{% if selected.percentil_ytd != '—' %}P{{ selected.percentil_ytd }}{% else %}—{% endif %}</strong></div>
+  <div class="metric"><small>Cuartil retorno YTD</small><strong>{% if selected.cuartil_ytd %}Q{{ selected.cuartil_ytd }}{% else %}—{% endif %}</strong></div>
 </div>
 
 <div class="grid kpis" style="margin-bottom:14px">
-  <div class="metric"><small>Percentil 1 año</small><strong>{{ selected.percentil_1y }}</strong></div>
-  <div class="metric"><small>Cuartil 1 año</small><strong>{% if selected.cuartil_1y %}Q{{ selected.cuartil_1y }}{% else %}—{% endif %}</strong></div>
-  <div class="metric"><small>Percentil YTD</small><strong>{{ selected.percentil_ytd }}</strong></div>
-  <div class="metric"><small>Cuartil YTD</small><strong>{% if selected.cuartil_ytd %}Q{{ selected.cuartil_ytd }}{% else %}—{% endif %}</strong></div>
+  <div class="metric"><small>MER / TE EWMA</small><strong>{{ selected.mer }}</strong></div>
+  <div class="metric"><small>Alpha 1 año</small><strong>{{ selected.alpha_1y }}</strong></div>
   <div class="metric"><small>Última cuota guardada</small><strong>{{ status.latest_date if status else '—' }}</strong></div>
 </div>
 
@@ -43,7 +41,7 @@
 <div class="card desktop-table">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
     <h3 style="margin:0">Peer group · {{ selected.categoria }}</h3>
-    <span style="font-size:12px;color:var(--muted)">Ordenado por Alpha 1A</span>
+    <span style="font-size:12px;color:var(--muted)">Comparación 1 año</span>
   </div>
   <div class="table-wrap"><table class="risk"><thead><tr><th>Fondo</th><th>MER / TE</th><th>Alpha 1A</th><th>IR 12M</th><th>Percentil</th></tr></thead><tbody>
     {% for r in selected.peer_rows %}<tr><td>{{ r.fondo }} {% if r.es_bci %}<span class="tag">BCI</span>{% endif %}</td><td class="te">{{ r.mer }}</td><td>{{ r.alpha }}</td><td>{{ r.ir }}</td><td>{{ r.percentil }}</td></tr>{% endfor %}
