@@ -4,7 +4,7 @@ import base64
 import os
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urljoin
 
@@ -26,6 +26,7 @@ CMF_PROXY_URL = os.getenv(
     "https://nusycxhrfynrrbvdiiko.supabase.co/functions/v1/cmf-cartola-proxy",
 ).strip()
 CMF_PROXY_KEY = os.getenv("CMF_PROXY_KEY", "bci-tracking-error-peers-v1").strip()
+BASELINE_DATE = date(2026, 8, 21)
 
 
 class CMFAutomationError(RuntimeError):
@@ -39,12 +40,7 @@ class PreparedCaptcha:
 
 
 class CMFQuotaSession:
-    """Sesión CMF con proxy serverless opcional.
-
-    Railway tiene egress bloqueado hacia cmfchile.cl en algunos rangos. Cuando
-    CMF_PROXY_URL está configurado, el proxy mantiene la sesión lógica mediante
-    las cookies que devuelve en prepare y recibe nuevamente en submit.
-    """
+    """Sesión CMF con proxy serverless opcional."""
 
     def __init__(self) -> None:
         self.session = requests.Session()
@@ -133,6 +129,12 @@ class CMFQuotaSession:
         response.raise_for_status()
         return response.text.strip() == "1"
 
+    @staticmethod
+    def _overlap_start(target: date) -> date:
+        if target >= BASELINE_DATE:
+            return max(BASELINE_DATE, target - timedelta(days=30))
+        return max(date(target.year, 1, 1), target - timedelta(days=7))
+
     def submit_captcha(self, code: str) -> tuple[bytes, str]:
         if self.prepared_date is None:
             raise CMFAutomationError("La sesión CMF no está preparada. Vuelve a elegir la fecha.")
@@ -141,9 +143,16 @@ class CMFQuotaSession:
             raise CMFAutomationError("Ingresa el código del captcha.")
 
         target = self.prepared_date
+        start = self._overlap_start(target)
         if CMF_PROXY_URL and CMF_PROXY_KEY:
             data = self._proxy_post(
-                {"action": "submit", "cookies": self.proxy_cookies, "code": code, "date": target.isoformat()},
+                {
+                    "action": "submit",
+                    "cookies": self.proxy_cookies,
+                    "code": code,
+                    "date": target.isoformat(),
+                    "start_date": start.isoformat(),
+                },
                 timeout=150,
             )
             try:
@@ -152,14 +161,14 @@ class CMFQuotaSession:
                 raise CMFAutomationError("El puente CMF devolvió una cartola inválida.") from exc
             if not content or b"RUN_FM" not in content[:500]:
                 raise CMFAutomationError("El puente CMF respondió sin una cartola válida.")
-            return content, str(data.get("filename") or f"cartola_todos_{target:%Y%m%d}_{target:%Y%m%d}.txt")
+            return content, str(data.get("filename") or f"cartola_todos_{start:%Y%m%d}_{target:%Y%m%d}.txt")
 
         try:
             if not self._validate_captcha(code):
                 raise CMFAutomationError("Captcha CMF rechazado. Vuelve a prepararlo e inténtalo de nuevo.")
             payload = {
                 "ffmm": "%",
-                "txt_inicio": f"{target:%d/%m/%Y}",
+                "txt_inicio": f"{start:%d/%m/%Y}",
                 "txt_termino": f"{target:%d/%m/%Y}",
                 "enviar": "Buscar",
                 "btnConsulta": "GENERAR ARCHIVO",
@@ -175,4 +184,4 @@ class CMFQuotaSession:
         content = response.content
         if "html" in content_type or not content or b"RUN_FM" not in content[:500]:
             raise CMFAutomationError("CMF respondió sin una cartola válida. Revisa el captcha y la fecha.")
-        return content, f"cartola_todos_{target:%Y%m%d}_{target:%Y%m%d}.txt"
+        return content, f"cartola_todos_{start:%Y%m%d}_{target:%Y%m%d}.txt"
