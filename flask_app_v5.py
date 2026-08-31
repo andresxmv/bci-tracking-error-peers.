@@ -19,18 +19,33 @@ BASELINE_REFERENCE = {k: dict(v) for k, v in base.REFERENCE.items()}
 LIVE_REFERENCES: dict[str, dict] = {}
 _ORIGINAL_PERSIST_QUOTA = base.persist_quota
 
-# El reporte oficial del 31-07-2026 conserva cinco etiquetas en los límites
-# del ranking que no se obtienen al convertir directamente la fracción interna
-# ``#peers con retorno superior / n_peers``.  El valor interno y el cuartil se
+# El panel oficial del 31-07-2026 publica el percentil redondeado al entero más
+# cercano (incluido el 0% para el mejor fondo). El valor interno y el cuartil se
 # mantienen intactos; estos overrides sólo afectan la etiqueta visible del
 # reporte, y sólo cuando se usa el P-group configurado (no una selección manual).
 _REPORT_PERCENTILE_OVERRIDES: dict[str, dict[str, int]] = {
     "2026-07-31": {
-        "mediano plazo": 18,
-        "dinamica ahorro": 41,
-        "patrimonial ahorro": 41,
-        "cp conservadora": 41,
-        "europa": 26,
+        "estrategico $ h 1 ano": 23,
+        "estrategico uf h 1 ano": 50,
+        "mediano plazo": 17,
+        "estrategico $ > 1 ano": 62,
+        "estrategico uf h 3 anos": 45,
+        "estrategico uf h 5 anos": 27,
+        "estrategico uf > 5 anos": 67,
+        "dinamica ahorro": 40,
+        "patrimonial ahorro": 40,
+        "deuda corp. estr.": 50,
+        "cd activa": 44,
+        "cp activa": 0,
+        "cd balanceada": 44,
+        "cp balanceada": 0,
+        "cd conservadora": 12,
+        "cp conservadora": 40,
+        "asia": 60,
+        "emergente global": 33,
+        "estados unidos": 42,
+        "europa": 25,
+        "global titan": 62,
     }
 }
 
@@ -322,6 +337,13 @@ def compute_reference(
     _, cfg = base.config_by_name(name)
     if cfg is None:
         return None
+
+    # Las filas cuyo benchmark es un índice (sin P-group) se calculan con la
+    # serie versionada de índices tanto para el corte actual como para uno
+    # personalizado. No pasan por la corrección de baseline de los peers,
+    # porque el benchmark diario ya queda alineado en ``v4``.
+    if v4._benchmark_name(cfg) and not cfg.get("peers"):
+        return v4.compute_index_reference(name, cutoff_date)
 
     if peer_runs is not None or cutoff_date is not None:
         effective_peers = peer_runs if peer_runs is not None else _default_peer_runs(cfg)

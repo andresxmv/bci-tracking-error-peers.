@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,76 @@ PROXY_KEY = "bci-tracking-error-peers-v1"
 # is loaded; no configured peer is silently removed from the calculation.
 EXCLUDED_RUNS = frozenset()
 REFERENCE_BASELINE = {key: dict(value) for key, value in base.REFERENCE.items()}
+INDEX_LEVELS_PATH = Path(__file__).resolve().parent / "indices" / "precios.xlsx"
+
+
+def _benchmark_name(cfg: dict | None) -> str | None:
+    """Nombre del índice benchmark declarado en la configuración."""
+    if not cfg:
+        return None
+    benchmark = cfg.get("benchmark")
+    if isinstance(benchmark, str):
+        return benchmark.strip() or None
+    if isinstance(benchmark, dict):
+        value = benchmark.get("indice")
+        return str(value).strip() if value else None
+    return None
+
+
+@lru_cache(maxsize=1)
+def _benchmark_levels() -> pd.DataFrame:
+    """Carga las series benchmark de la planilla Bloomberg versionada.
+
+    La planilla tiene dos hojas con el mismo calendario; ``precio_moneda_clp``
+    es la fuente que corresponde a los índices configurados en pesos.  Se
+    devuelve un DataFrame vacío cuando el archivo todavía no está disponible,
+    para que las categorías por P-group sigan funcionando sin depender de él.
+    """
+    path = INDEX_LEVELS_PATH
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        with pd.ExcelFile(path) as workbook:
+            if "precio_moneda_clp" in workbook.sheet_names:
+                raw = pd.read_excel(path, sheet_name="precio_moneda_clp", header=None)
+                date_rows = raw.index[
+                    raw.iloc[:, 0].astype(str).str.strip().str.casefold().eq("dates")
+                ]
+                if len(date_rows) != 1:
+                    return pd.DataFrame()
+                header_row = int(date_rows[0])
+                names = raw.iloc[header_row - 2, 1:].astype(str).str.strip().tolist()
+                data = raw.iloc[header_row + 1 :, : len(names) + 1].copy()
+                data.columns = ["Fecha", *names]
+            else:
+                data = pd.read_excel(path, sheet_name=workbook.sheet_names[0])
+        if data.empty:
+            return pd.DataFrame()
+        data["Fecha"] = pd.to_datetime(data["Fecha"], errors="coerce").dt.normalize()
+        data = data.dropna(subset=["Fecha"]).set_index("Fecha").sort_index()
+        data = data.loc[~data.index.duplicated(keep="last")]
+        data = data.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+        data.columns = [str(column).strip() for column in data.columns]
+        return data
+    except Exception:
+        return pd.DataFrame()
+
+
+def _aligned_benchmark_series(name: str, target_index: pd.DatetimeIndex) -> pd.Series:
+    """Alinea un índice semanal al calendario diario de las cuotas."""
+    if len(target_index) == 0:
+        return pd.Series(dtype=float)
+    sheet = _benchmark_levels()
+    if sheet.empty or name not in sheet.columns:
+        return pd.Series(dtype=float)
+    observed = pd.to_numeric(sheet[name], errors="coerce").dropna().sort_index()
+    if observed.empty:
+        return pd.Series(dtype=float)
+    target = pd.DatetimeIndex(target_index).normalize()
+    union = observed.index.union(target).sort_values()
+    aligned = observed.reindex(union).ffill().reindex(target)
+    aligned.name = f"IDX:{name}"
+    return aligned
 
 
 @lru_cache(maxsize=1)
@@ -432,6 +503,18 @@ def _build_live_category_levels(name: str, extra_runs: list[str] | None = None) 
             levels.loc[daily_levels.index, col] = daily_levels
             continue
         levels = _merge_return_segments(levels, col, returns, baseline_date)
+
+    # Las categorías declaradas con ``benchmark`` no tienen peers CMF.  La
+    # serie BCI se reconstruye arriba desde los retornos diarios y aquí se
+    # agrega el índice semanal versionado, arrastrando su último cierre al
+    # calendario de cuotas.  Esto permite calcular también las filas de
+    # Acciones Globales y América Latina al seleccionar cualquier corte.
+    benchmark = _benchmark_name(cfg)
+    if benchmark and not levels.empty:
+        aligned = _aligned_benchmark_series(benchmark, levels.index)
+        if not aligned.empty:
+            levels = levels.reindex(levels.index.union(aligned.index)).sort_index()
+            levels[aligned.name] = aligned.reindex(levels.index)
     return levels.sort_index()
 
 
@@ -492,6 +575,111 @@ def trailing_returns(
     return pd.Series(result, dtype=float)
 
 
+def _information_ratio(active: pd.Series) -> float:
+    """Information Ratio del reporte, con desviación estándar semanal.
+
+    El panel oficial muestra la media del retorno activo semanal anualizada y
+    la divide por la desviación estándar de esos mismos retornos anualizada
+    con ``sqrt(52)``.  El TE EWMA se mantiene como la métrica de tracking error
+    independiente; no se usa como denominador del IR.
+    """
+    values = pd.to_numeric(active, errors="coerce").dropna()
+    if len(values) < 2:
+        return float("nan")
+    denominator = float(values.std(ddof=1) * math.sqrt(52))
+    if not math.isfinite(denominator) or denominator <= 0:
+        return float("nan")
+    return float(values.mean() * 52 / denominator)
+
+
+def compute_index_reference(
+    name: str,
+    cutoff_date: pd.Timestamp | None = None,
+) -> dict | None:
+    """Calcula las métricas de una categoría cuyo benchmark es un índice.
+
+    Los índices se conservan en una planilla pequeña dentro del repositorio;
+    así Railway puede reproducir el mismo corte que el panel oficial sin
+    depender de archivos del escritorio. Si el índice no está disponible se
+    devuelve ``None`` y el llamador conserva su referencia histórica.
+    """
+    _, cfg = base.config_by_name(name)
+    benchmark = _benchmark_name(cfg)
+    if cfg is None or not benchmark:
+        return None
+    levels = live_category_levels(name)
+    if levels.empty:
+        return None
+    bci_col = base.column_for_run(levels.columns, cfg.get("bci"))
+    benchmark_col = f"IDX:{benchmark}"
+    if bci_col is None or benchmark_col not in levels.columns:
+        return None
+
+    available = levels[[bci_col, benchmark_col]].dropna(how="any").sort_index()
+    if available.empty:
+        return None
+    cutoff = (
+        pd.Timestamp(cutoff_date).normalize()
+        if cutoff_date is not None
+        else pd.Timestamp(available.index.max()).normalize()
+    )
+    available = available.loc[:cutoff]
+    if available.empty:
+        return None
+    reference_date = pd.Timestamp(available.index.max()).normalize()
+    weekly = available.resample("W-FRI").last().pct_change(fill_method=None).dropna(how="any")
+    weekly = weekly.tail(52)
+    if len(weekly) < 2:
+        return None
+    active = weekly[bci_col] - weekly[benchmark_col]
+    te_display = base.ewma_te(active, annualize=bool(cfg.get("te_anualizado", True)))
+    ir = _information_ratio(active)
+    ir_ytd = float("nan")
+    start_of_year = pd.Timestamp(reference_date.year, 1, 1)
+    weekly_ytd = weekly.loc[(weekly.index >= start_of_year) & (weekly.index <= reference_date)]
+    if len(weekly_ytd) >= 2:
+        ir_ytd = _information_ratio(weekly_ytd[bci_col] - weekly_ytd[benchmark_col])
+
+    portfolio_1y, benchmark_1y = _cumulative_daily_peer(
+        available,
+        bci_col,
+        [benchmark_col],
+        reference_date,
+        reference_date - pd.DateOffset(years=1),
+    )
+    # El retorno YTD que se muestra para el fondo usa su propia base al
+    # 31-dic (si existe), igual que ``_ytd_returns`` para un P-group.  Alpha
+    # YTD, en cambio, se calcula desde la primera fecha común con el índice
+    # (el archivo de índices comienza el 02-ene). Mantener ambos retornos
+    # separados evita inflar el YTD de los fondos benchmark por perder la
+    # cuota del 31-dic al hacer ``dropna`` contra el índice.
+    portfolio_ytd_series = _ytd_returns(levels[[bci_col]], reference_date)
+    portfolio_ytd = float(portfolio_ytd_series.get(bci_col, float("nan")))
+    portfolio_ytd_common, benchmark_ytd = _cumulative_daily_peer(
+        available,
+        bci_col,
+        [benchmark_col],
+        reference_date,
+        pd.Timestamp(reference_date.year - 1, 12, 31),
+    )
+    if pd.isna(portfolio_ytd) or pd.isna(portfolio_ytd_common) or pd.isna(benchmark_ytd):
+        return None
+
+    return {
+        "Fondo": name,
+        "Fecha": reference_date,
+        "TE EWMA anual": te_display,
+        "Alpha anual": portfolio_1y - benchmark_1y,
+        "Alpha YTD": portfolio_ytd_common - benchmark_ytd,
+        "Information Ratio": ir,
+        "Information Ratio YTD": ir_ytd,
+        "Retorno YTD": portfolio_ytd,
+        "Percentil YTD": float("nan"),
+        "Cuartil YTD": float("nan"),
+        "Retorno benchmark YTD": benchmark_ytd,
+    }
+
+
 def _cumulative_daily_peer(levels: pd.DataFrame, bci_col: str, peer_cols: list[str], reference_date: pd.Timestamp, target_date: pd.Timestamp) -> tuple[float, float]:
     common = levels.loc[:reference_date, [bci_col, *peer_cols]].dropna(how="any").sort_index()
     if len(common) < 2:
@@ -546,8 +734,7 @@ def information_ratio_ytd(
         return float("nan")
 
     active = weekly_ytd[bci_col] - weekly_ytd[peer_cols].mean(axis=1)
-    te = base.ewma_te(active, annualize=True)
-    return float(active.mean() * 52 / te) if pd.notna(te) and te > 0 else float("nan")
+    return _information_ratio(active)
 
 
 @lru_cache(maxsize=1)
@@ -766,8 +953,7 @@ def compute_custom_reference(
     active = portfolio - benchmark
 
     te_display = base.ewma_te(active, annualize=bool(cfg.get("te_anualizado", True)))
-    te_ir = base.ewma_te(active, annualize=True)
-    ir = float(active.mean() * 52 / te_ir) if pd.notna(te_ir) and te_ir > 0 else float("nan")
+    ir = _information_ratio(active)
     ir_ytd = information_ratio_ytd(name, reference_date, peer_runs)
 
     ytd = _ytd_returns(levels[required], reference_date)
@@ -805,7 +991,11 @@ def compute_custom_reference(
 
 def compute_live_reference(name: str) -> dict | None:
     _, cfg = base.config_by_name(name)
-    if cfg is None or not cfg.get("peers"):
+    if cfg is None:
+        return None
+    if _benchmark_name(cfg) and not cfg.get("peers"):
+        return compute_index_reference(name)
+    if not cfg.get("peers"):
         return None
     # The report's explicit exclusions are kept out of the default metrics,
     # while all Excel RUNs remain available through the selector/custom path.
@@ -840,8 +1030,7 @@ def compute_live_reference(name: str) -> dict | None:
     active = portfolio - benchmark
 
     te_display = base.ewma_te(active, annualize=bool(cfg.get("te_anualizado", True)))
-    te_ir = base.ewma_te(active, annualize=True)
-    ir = float(active.mean() * 52 / te_ir) if pd.notna(te_ir) and te_ir > 0 else float("nan")
+    ir = _information_ratio(active)
     ir_ytd = information_ratio_ytd(name, reference_date)
 
     ytd = _ytd_returns(levels[required], reference_date)
@@ -982,8 +1171,7 @@ def custom_peer_rows(
         others = [candidate for candidate in use if candidate != column]
         active = weekly[column] - weekly[others].mean(axis=1)
         te_display = base.ewma_te(active, annualize=bool(cfg.get("te_anualizado", True)))
-        te_ir = base.ewma_te(active, annualize=True)
-        ir = float(active.mean() * 52 / te_ir) if pd.notna(te_ir) and te_ir > 0 else float("nan")
+        ir = _information_ratio(active)
         group_trailing = trailing[[column, *others]].dropna()
         alpha = (
             float(group_trailing[column] - group_trailing.mean())
