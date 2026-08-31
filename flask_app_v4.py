@@ -99,7 +99,14 @@ def available_peer_options(name: str) -> list[dict]:
     _, cfg = base.config_by_name(name)
     if cfg is None:
         return []
-    defaults = {normalize_run(run) for run in cfg.get("peers", [])}
+    excluded_defaults = {
+        normalize_run(run)
+        for run in (cfg.get("excluir") or cfg.get("report_exclude") or [])
+    }
+    defaults = {
+        normalize_run(run) for run in cfg.get("peers", [])
+        if normalize_run(run) not in excluded_defaults
+    }
     history_runs = set(historical_universe_levels().columns.astype(str))
     # A RUN may not be present in the embedded weekly workbook but can already
     # have daily returns in the versioned seed or in runtime_data. Reflect that
@@ -235,11 +242,63 @@ def _merge_return_segments(
         for index, value in levels[column].items()
     }
     touched = False
+
+    def add_scaled_block(block: pd.Series) -> bool:
+        """Add a return block when its first observation predates the levels.
+
+        The embedded workbook starts at a weekly anchor (22-08-2025), while
+        the versioned daily seed now contains the preceding year.  Rebuilding
+        those earlier levels from a synthetic 100 is safe because all metrics
+        use returns, but the scale must be fixed at the first overlapping
+        anchor so we never overwrite a validated quota or create a jump.
+        """
+        block = pd.to_numeric(block, errors="coerce").dropna().sort_index()
+        if block.empty:
+            return False
+        cumulative = (1.0 + block).cumprod()
+        overlap = [
+            date for date in cumulative.index
+            if date in values and pd.notna(values.get(date))
+        ]
+        scale = None
+        if overlap:
+            anchor = overlap[0]
+            base_value = float(cumulative.loc[anchor])
+            if base_value > 0:
+                scale = float(values[anchor]) / base_value
+        else:
+            existing = sorted(
+                date for date, value in values.items() if pd.notna(value)
+            )
+            # If the block stops just before the first stored anchor (normal
+            # case for a Friday workbook), use that anchor to set the scale.
+            future = [
+                date for date in existing
+                if date >= cumulative.index[-1]
+                and (date - cumulative.index[-1]).days <= MAX_RETURN_GAP_DAYS
+            ]
+            if future and float(cumulative.iloc[-1]) > 0:
+                scale = float(values[future[0]]) / float(cumulative.iloc[-1])
+            elif not existing:
+                # A configured RUN without a workbook series can still enter
+                # the P-group as soon as its cartola is loaded.
+                scale = 100.0
+        if scale is None or not pd.notna(scale) or scale <= 0:
+            return False
+        for dt, value in cumulative.items():
+            if dt not in values or pd.isna(values.get(dt)):
+                values[dt] = float(value) * scale
+        return True
+
     for _, block in returns.groupby(segment):
         first_date = pd.Timestamp(block.index.min()).normalize()
         existing = sorted(date for date, value in values.items() if pd.notna(value))
         anchors = [date for date in existing if date < first_date]
         if not anchors:
+            # Daily history can legitimately begin before the first embedded
+            # weekly anchor, or this can be a RUN that has no embedded series.
+            if add_scaled_block(block):
+                touched = True
             continue
         anchor_date = anchors[-1]
         current = float(values[anchor_date])
@@ -297,6 +356,19 @@ def _cached_category_levels(key: tuple, signature: tuple) -> pd.DataFrame:
     return _build_live_category_levels(name, list(extra) if extra else None)
 
 
+def _levels_from_returns(returns: pd.Series, base_value: float = 100.0) -> pd.Series:
+    """Build a daily level index from one deduplicated return per date."""
+    ordered = pd.to_numeric(returns, errors="coerce").dropna().sort_index()
+    if ordered.empty:
+        return pd.Series(dtype=float)
+    cumulative = base_value * (1.0 + ordered).cumprod()
+    base_date = pd.Timestamp(ordered.index.min()).normalize() - pd.Timedelta(days=1)
+    return pd.concat([
+        pd.Series({base_date: float(base_value)}),
+        cumulative,
+    ]).sort_index()
+
+
 def _build_live_category_levels(name: str, extra_runs: list[str] | None = None) -> pd.DataFrame:
     levels = ORIGINAL_CATEGORY_LEVELS(name).copy()
     _, cfg = base.config_by_name(name)
@@ -339,10 +411,25 @@ def _build_live_category_levels(name: str, extra_runs: list[str] | None = None) 
             # Para RUN nuevos del Excel sin serie embebida, el primer nivel es
             # sintético (100). La escala no afecta retornos, TE, alpha ni IR;
             # permite que una cartola cargada por el usuario entre al P-group.
-            cumulative = (1.0 + returns).cumprod()
-            levels = levels.join(cumulative.rename(run_norm), how="outer")
+            levels = levels.join(_levels_from_returns(returns).rename(run_norm), how="outer")
             continue
         if col is None:
+            continue
+
+        # Cuando la semilla cubre desde antes del primer cierre semanal
+        # embebido, reconstruir la columna completa desde los retornos diarios.
+        # Asi Alpha 1A usa exactamente la ventana de 365 dias del reporte, sin
+        # mezclar una serie semanal aproximada con una cartola diaria.
+        existing_series = levels[col].dropna().sort_index()
+        gaps = returns.index.to_series().diff().dt.days.dropna()
+        if (
+            not returns.empty
+            and (existing_series.empty or returns.index.min() <= existing_series.index.min())
+            and (gaps.empty or gaps.max() <= MAX_RETURN_GAP_DAYS)
+        ):
+            daily_levels = _levels_from_returns(returns)
+            levels = levels.reindex(levels.index.union(daily_levels.index))
+            levels.loc[daily_levels.index, col] = daily_levels
             continue
         levels = _merge_return_segments(levels, col, returns, baseline_date)
     return levels.sort_index()
@@ -354,6 +441,12 @@ def _columns_for_peers(name: str, levels: pd.DataFrame, peer_runs: list[str] | N
         return None, []
     bci = base.column_for_run(levels.columns, cfg["bci"])
     requested = cfg.get("peers", []) if peer_runs is None else peer_runs
+    if peer_runs is None:
+        excluded = {
+            normalize_run(run)
+            for run in (cfg.get("excluir") or cfg.get("report_exclude") or [])
+        }
+        requested = [run for run in requested if normalize_run(run) not in excluded]
     peers = [base.column_for_run(levels.columns, run) for run in requested]
     peers = [column for column in peers if column is not None and column != bci]
     return bci, list(dict.fromkeys(peers))
@@ -371,6 +464,31 @@ def _ytd_returns(levels: pd.DataFrame, reference_date: pd.Timestamp) -> pd.Serie
         prior = s.loc[s.index < start_of_year]
         base_value = prior.iloc[-1] if not prior.empty else s.iloc[0]
         result[str(col)] = float(s.iloc[-1] / base_value - 1.0)
+    return pd.Series(result, dtype=float)
+
+
+def trailing_returns(
+    levels: pd.DataFrame,
+    reference_date: pd.Timestamp,
+    years: int = 1,
+) -> pd.Series:
+    """Retorno acumulado individual a N años.
+
+    Alpha 1A del reporte se construye como el retorno de cada fondo menos el
+    promedio simple de los retornos individuales del grupo completo (BCI +
+    peers). No se compone el promedio diario del peer group: esas dos
+    operaciones no son equivalentes cuando los fondos tienen dispersion.
+    """
+    reference_date = pd.Timestamp(reference_date).normalize()
+    target_date = reference_date - pd.DateOffset(years=years)
+    result: dict[str, float] = {}
+    for column in levels.columns:
+        series = levels[column].loc[:reference_date].dropna()
+        bases = series.loc[:target_date]
+        if series.empty or bases.empty or float(bases.iloc[-1]) <= 0:
+            result[str(column)] = float("nan")
+            continue
+        result[str(column)] = float(series.iloc[-1] / bases.iloc[-1] - 1.0)
     return pd.Series(result, dtype=float)
 
 
@@ -396,6 +514,12 @@ def information_ratio_ytd(
     """IR anualizado usando retornos activos semanales del año calendario."""
     _, cfg = base.config_by_name(name)
     requested = cfg.get("peers", []) if peer_runs is None and cfg is not None else (peer_runs or [])
+    if peer_runs is None and cfg is not None:
+        excluded = {
+            normalize_run(run)
+            for run in (cfg.get("excluir") or cfg.get("report_exclude") or [])
+        }
+        requested = [run for run in requested if normalize_run(run) not in excluded]
     if cfg is None or not requested:
         return float("nan")
 
@@ -404,13 +528,16 @@ def information_ratio_ytd(
     if levels.empty or bci_col is None or not peer_cols:
         return float("nan")
 
+    cutoff_value = reference_date if reference_date is not None else levels.index.max()
+    cutoff = pd.Timestamp(cutoff_value).normalize()
+    peer_cols = _complete_peer_columns(levels, bci_col, peer_cols, cutoff)
+    if not peer_cols:
+        return float("nan")
+
     required = [bci_col, *peer_cols]
     metric_levels = levels[required].dropna(how="any").sort_index()
     if metric_levels.empty:
         return float("nan")
-
-    cutoff_value = reference_date if reference_date is not None else metric_levels.index.max()
-    cutoff = pd.Timestamp(cutoff_value).normalize()
     weekly_levels = metric_levels.loc[:cutoff].resample("W-FRI").last().dropna(how="any")
     weekly_all = weekly_levels.pct_change(fill_method=None).dropna(how="any")
     start_of_year = pd.Timestamp(year=cutoff.year, month=1, day=1)
@@ -491,6 +618,46 @@ def _calendar_ytd(serie: pd.Series, cutoff: pd.Timestamp) -> float | None:
     return float((1.0 + window).prod() - 1.0)
 
 
+def _has_ytd_coverage(levels: pd.DataFrame, column: str, cutoff: pd.Timestamp) -> bool:
+    """Whether a level series covers the complete calendar YTD window.
+
+    A peer that stopped reporting months before the selected cut-off must not
+    be ranked using its last stale value. The selector still exposes that RUN;
+    this predicate only controls the effective calculation universe.
+    """
+    if column not in levels.columns:
+        return False
+    cutoff = pd.Timestamp(cutoff).normalize()
+    start = pd.Timestamp(cutoff.year, 1, 1)
+    series = levels[column].loc[:cutoff].dropna().sort_index()
+    if series.empty:
+        return False
+    prior = series.loc[series.index <= start]
+    if prior.empty or (start - pd.Timestamp(prior.index[-1])).days > MAX_RETURN_GAP_DAYS:
+        return False
+    if (cutoff - pd.Timestamp(series.index[-1])).days > MAX_RETURN_GAP_DAYS:
+        return False
+    if len(series) > 1:
+        gaps = pd.Series(series.index).diff().dt.days.dropna()
+        if not gaps.empty and gaps.max() > MAX_RETURN_GAP_DAYS:
+            return False
+    return True
+
+
+def _complete_peer_columns(
+    levels: pd.DataFrame,
+    bci_col: str,
+    peer_cols: list[str],
+    reference_date: pd.Timestamp,
+) -> list[str]:
+    """Keep peers with a valid YTD window while preserving their order."""
+    del bci_col  # reserved for readability at call sites and future checks
+    return [
+        column for column in peer_cols
+        if _has_ytd_coverage(levels, column, reference_date)
+    ]
+
+
 def calendar_ytd_metrics(
     name: str,
     peer_runs: list[str] | None,
@@ -509,6 +676,12 @@ def calendar_ytd_metrics(
     if cfg is None or not cfg.get("bci"):
         return None
     requested = cfg.get("peers", []) if peer_runs is None else peer_runs
+    if peer_runs is None:
+        excluded = {
+            normalize_run(run)
+            for run in (cfg.get("excluir") or cfg.get("report_exclude") or [])
+        }
+        requested = [run for run in requested if normalize_run(run) not in excluded]
     if not requested:
         return None
 
@@ -568,6 +741,15 @@ def compute_custom_reference(
     if levels.empty or bci_col is None or not peer_cols:
         return None
 
+    requested_cutoff = (
+        pd.Timestamp(cutoff_date).normalize()
+        if cutoff_date is not None
+        else pd.Timestamp(levels.index.max()).normalize()
+    )
+    peer_cols = _complete_peer_columns(levels, bci_col, peer_cols, requested_cutoff)
+    if not peer_cols:
+        return None
+
     required = [bci_col, *peer_cols]
     metric_levels = levels[required].dropna(how="any")
     if metric_levels.empty:
@@ -596,10 +778,15 @@ def compute_custom_reference(
     benchmark_ytd = float(ytd[[bci_col, *peer_cols]].mean())
     alpha_ytd = portfolio_ytd - benchmark_ytd
 
-    p1y, b1y = _cumulative_daily_peer(
-        levels[required], bci_col, peer_cols, reference_date, reference_date - pd.DateOffset(years=1)
-    )
-    alpha_1y = p1y - b1y if pd.notna(p1y) and pd.notna(b1y) else float("nan")
+    trailing = trailing_returns(levels[required], reference_date, 1)
+    group_trailing = trailing[[bci_col, *peer_cols]].dropna()
+    if bci_col in group_trailing.index and len(group_trailing) > 1:
+        alpha_1y = float(
+            group_trailing[bci_col]
+            - group_trailing.mean()
+        )
+    else:
+        alpha_1y = float("nan")
 
     return {
         "Fondo": name,
@@ -620,9 +807,22 @@ def compute_live_reference(name: str) -> dict | None:
     _, cfg = base.config_by_name(name)
     if cfg is None or not cfg.get("peers"):
         return None
-    levels = live_category_levels(name)
-    bci_col, peer_cols = base.configured_columns(name, levels)
+    # The report's explicit exclusions are kept out of the default metrics,
+    # while all Excel RUNs remain available through the selector/custom path.
+    default_peers = [
+        run for run in cfg.get("peers", [])
+        if normalize_run(run) not in {
+            normalize_run(excluded)
+            for excluded in (cfg.get("excluir") or cfg.get("report_exclude") or [])
+        }
+    ]
+    levels = live_category_levels(name, default_peers)
+    bci_col, peer_cols = _columns_for_peers(name, levels, default_peers)
     if levels.empty or bci_col is None or not peer_cols:
+        return None
+    candidate_date = pd.Timestamp(levels.index.max()).normalize()
+    peer_cols = _complete_peer_columns(levels, bci_col, peer_cols, candidate_date)
+    if not peer_cols:
         return None
     required = [bci_col, *peer_cols]
     metric_levels = levels[required].dropna(how="any")
@@ -653,10 +853,15 @@ def compute_live_reference(name: str) -> dict | None:
     benchmark_ytd = float(ytd[[bci_col, *peer_cols]].mean())
     alpha_ytd = portfolio_ytd - benchmark_ytd
 
-    p1y, b1y = _cumulative_daily_peer(
-        levels[required], bci_col, peer_cols, reference_date, reference_date - pd.DateOffset(years=1)
-    )
-    alpha_1y = p1y - b1y if pd.notna(p1y) and pd.notna(b1y) else float("nan")
+    trailing = trailing_returns(levels[required], reference_date, 1)
+    group_trailing = trailing[[bci_col, *peer_cols]].dropna()
+    if bci_col in group_trailing.index and len(group_trailing) > 1:
+        alpha_1y = float(
+            group_trailing[bci_col]
+            - group_trailing.mean()
+        )
+    else:
+        alpha_1y = float("nan")
 
     return {
         "Fondo": name,
@@ -676,6 +881,13 @@ def compute_live_reference(name: str) -> dict | None:
 def analysis_date_bounds(name: str, peer_runs: list[str] | None = None):
     levels = live_category_levels(name, peer_runs)
     bci_col, peer_cols = _columns_for_peers(name, levels, peer_runs)
+    if levels.empty or bci_col is None:
+        return None, None
+    bci_series = levels[bci_col].dropna()
+    if bci_series.empty:
+        return None, None
+    candidate = pd.Timestamp(bci_series.index.max()).normalize()
+    peer_cols = _complete_peer_columns(levels, bci_col, peer_cols, candidate)
     use = [column for column in [bci_col, *peer_cols] if column is not None]
     if levels.empty or not use:
         return None, None
@@ -695,6 +907,10 @@ def live_historical_te(
         levels = levels.loc[:pd.Timestamp(cutoff_date).normalize()]
     bci_col, peer_cols = _columns_for_peers(name, levels, peer_runs)
     if levels.empty or bci_col is None or not peer_cols:
+        return {"labels": [], "bci": [], "p75": []}
+    candidate = pd.Timestamp(levels.index.max()).normalize()
+    peer_cols = _complete_peer_columns(levels, bci_col, peer_cols, candidate)
+    if not peer_cols:
         return {"labels": [], "bci": [], "p75": []}
     use = [bci_col, *peer_cols]
     weekly = levels[use].dropna(how="any").resample("W-FRI").last()
@@ -739,6 +955,11 @@ def custom_peer_rows(
     if cfg is None or levels.empty or bci_col is None or not peer_cols:
         return []
 
+    candidate_date = pd.Timestamp(levels.index.max()).normalize()
+    peer_cols = _complete_peer_columns(levels, bci_col, peer_cols, candidate_date)
+    if not peer_cols:
+        return []
+
     use = [bci_col, *peer_cols]
     common = levels[use].dropna(how="any").sort_index()
     if common.empty:
@@ -749,6 +970,7 @@ def custom_peer_rows(
     if len(weekly) < 2:
         return []
     ytd = _ytd_returns(common, reference_date)
+    trailing = trailing_returns(common, reference_date, 1)
     run_by_column = {bci_col: str(cfg["bci"])}
     for run in peer_runs:
         column = base.column_for_run(peer_cols, run)
@@ -762,10 +984,12 @@ def custom_peer_rows(
         te_display = base.ewma_te(active, annualize=bool(cfg.get("te_anualizado", True)))
         te_ir = base.ewma_te(active, annualize=True)
         ir = float(active.mean() * 52 / te_ir) if pd.notna(te_ir) and te_ir > 0 else float("nan")
-        p1y, b1y = _cumulative_daily_peer(
-            common, column, others, reference_date, reference_date - pd.DateOffset(years=1)
+        group_trailing = trailing[[column, *others]].dropna()
+        alpha = (
+            float(group_trailing[column] - group_trailing.mean())
+            if column in group_trailing.index and len(group_trailing) > 1
+            else float("nan")
         )
-        alpha = p1y - b1y if pd.notna(p1y) and pd.notna(b1y) else float("nan")
         percentile = float((ytd[others] > ytd[column]).sum() / len(others))
         run = run_by_column.get(column, str(column))
         rows.append({

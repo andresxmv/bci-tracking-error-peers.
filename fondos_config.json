@@ -415,7 +415,8 @@
         "9685",
         "10068",
         "8043"
-      ]
+      ],
+      "excluir": ["9362"]
     },
     "acciones_chilenas": {
       "nombre": "Acciones Chilenas",
